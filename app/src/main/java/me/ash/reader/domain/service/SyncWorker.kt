@@ -6,6 +6,7 @@ import androidx.work.*
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
+import me.ash.reader.domain.data.ArticleCleanupUseCase
 import me.ash.reader.domain.model.account.Account
 import me.ash.reader.infrastructure.rss.ReaderCacheHelper
 
@@ -17,6 +18,8 @@ constructor(
     @Assisted workerParams: WorkerParameters,
     private val rssService: RssService,
     private val readerCacheHelper: ReaderCacheHelper,
+    private val articleCleanupUseCase: ArticleCleanupUseCase,
+    private val webDavSyncService: WebDavSyncService,
     private val workManager: WorkManager,
 ) : CoroutineWorker(context, workerParams) {
 
@@ -34,6 +37,7 @@ constructor(
                 rssService.get().clearKeepArchivedArticles().forEach {
                     readerCacheHelper.deleteCacheFor(articleId = it.id)
                 }
+                articleCleanupUseCase.autoCleanup(accountId)
                 workManager
                     .beginUniqueWork(
                         uniqueWorkName = POST_SYNC_WORK_NAME,
@@ -50,6 +54,7 @@ constructor(
                     )
                     .then(OneTimeWorkRequestBuilder<WidgetUpdateWorker>().build())
                     .enqueue()
+                webDavSyncService.autoSync(accountId)
             }
     }
 

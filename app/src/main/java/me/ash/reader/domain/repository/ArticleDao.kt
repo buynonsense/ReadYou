@@ -12,7 +12,10 @@ import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import me.ash.reader.domain.model.article.Article
+import me.ash.reader.domain.model.article.ArticleLinkMeta
 import me.ash.reader.domain.model.article.ArticleMeta
+import me.ash.reader.domain.model.article.ArticleSnapshot
+import me.ash.reader.domain.model.article.ArticleSyncMeta
 import me.ash.reader.domain.model.article.ArticleWithFeed
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.model.feed.ImportantNum
@@ -429,6 +432,129 @@ interface ArticleDao {
         """
     )
     suspend fun deleteByAccountId(accountId: Int)
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM article
+        WHERE accountId = :accountId
+        AND date < :before
+        AND (isUnread = 0 OR :includeUnread = 1)
+        AND (isStarred = 0 OR :keepStarred = 0)
+        """
+    )
+    suspend fun countArticlesBefore(
+        accountId: Int,
+        before: Date,
+        includeUnread: Boolean = false,
+        keepStarred: Boolean = true,
+    ): Int
+
+    @Query(
+        """
+        SELECT id, feedId, link FROM article
+        WHERE accountId = :accountId
+        AND date < :before
+        AND (isUnread = 0 OR :includeUnread = 1)
+        AND (isStarred = 0 OR :keepStarred = 0)
+        """
+    )
+    suspend fun queryArticleIdentitiesBefore(
+        accountId: Int,
+        before: Date,
+        includeUnread: Boolean = false,
+        keepStarred: Boolean = true,
+    ): List<ArticleLinkMeta>
+
+    @Query(
+        """
+        DELETE FROM article
+        WHERE accountId = :accountId
+        AND date < :before
+        AND (isUnread = 0 OR :includeUnread = 1)
+        AND (isStarred = 0 OR :keepStarred = 0)
+        """
+    )
+    suspend fun deleteArticlesBefore(
+        accountId: Int,
+        before: Date,
+        includeUnread: Boolean = false,
+        keepStarred: Boolean = true,
+    ): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM article
+        WHERE accountId = :accountId
+        """
+    )
+    fun countAllAsFlow(accountId: Int): Flow<Int>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM article
+        WHERE accountId = :accountId
+        AND isUnread = 1
+        """
+    )
+    fun countUnreadAsFlow(accountId: Int): Flow<Int>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM article
+        WHERE accountId = :accountId
+        AND isUnread = 0
+        """
+    )
+    fun countReadAsFlow(accountId: Int): Flow<Int>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM article
+        WHERE accountId = :accountId
+        AND isStarred = 1
+        """
+    )
+    fun countStarredAsFlow(accountId: Int): Flow<Int>
+
+    @Query(
+        """
+        SELECT id, feedId, link FROM article
+        WHERE feedId = :feedId
+        """
+    )
+    suspend fun queryArticleIdentitiesByFeedId(feedId: String): List<ArticleLinkMeta>
+
+    @Query(
+        """
+        SELECT id, feedId, link, isUnread, isStarred, isReadLater FROM article
+        WHERE feedId = :feedId
+        """
+    )
+    suspend fun queryArticleSyncMetasByFeedId(feedId: String): List<ArticleSyncMeta>
+
+    @Query(
+        """
+        SELECT id, date, title, author, rawDescription, shortDescription,
+        img, link, feedId, isUnread, isStarred, isReadLater
+        FROM article
+        WHERE accountId = :accountId
+        ORDER BY date DESC
+        """
+    )
+    suspend fun queryArticleSnapshotsByAccountId(accountId: Int): List<ArticleSnapshot>
+
+    @Query(
+        """
+        UPDATE article SET isReadLater = :isReadLater
+        WHERE accountId = :accountId
+        AND id in (:ids)
+        """
+    )
+    suspend fun markAsReadLaterByIdSet(
+        accountId: Int,
+        ids: Set<String>,
+        isReadLater: Boolean,
+    ): Int
 
 
     @Transaction

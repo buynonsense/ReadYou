@@ -82,5 +82,11 @@ data class Settings(
 
     // Languages
     val languages: LanguagesPreference = LanguagesPreference.default,
+
+    // Article cleanup
+    val autoCleanupArticles: AutoCleanupArticlesPreference = AutoCleanupArticlesPreference.default,
+    val autoCleanupRetention: ArticleCleanupRetentionPreference = ArticleCleanupRetentionPreference.default,
+    val autoCleanupIncludeUnread: AutoCleanupIncludeUnreadPreference = AutoCleanupIncludeUnreadPreference.default,
+    val autoCleanupKeepStarred: AutoCleanupKeepStarredPreference = AutoCleanupKeepStarredPreference.default,
 )
 

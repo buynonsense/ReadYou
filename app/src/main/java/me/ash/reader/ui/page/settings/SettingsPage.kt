@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Palette
@@ -48,6 +49,7 @@ fun SettingsPage(
     updateViewModel: UpdateViewModel = hiltViewModel(),
     onBack: () -> Unit,
     navigateToAccounts: () -> Unit,
+    navigateToArticleCleanup: () -> Unit,
     navigateToColorAndStyle: () -> Unit,
     navigateToInteraction: () -> Unit,
     navigateToLanguages: () -> Unit,
@@ -109,6 +111,14 @@ fun SettingsPage(
                         desc = stringResource(R.string.accounts_desc),
                         icon = Icons.Outlined.AccountCircle,
                         onClick = navigateToAccounts
+                    )
+                }
+                item {
+                    SelectableSettingGroupItem(
+                        title = stringResource(R.string.article_cleanup),
+                        desc = stringResource(R.string.article_cleanup_desc),
+                        icon = Icons.Outlined.DeleteSweep,
+                        onClick = navigateToArticleCleanup
                     )
                 }
                 item {

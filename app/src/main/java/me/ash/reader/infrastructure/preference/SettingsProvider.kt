@@ -140,6 +140,12 @@ class SettingsProvider @Inject constructor(
 
             // Languages
             LocalLanguages provides settings.languages,
+
+            // Article cleanup
+            LocalAutoCleanupArticles provides settings.autoCleanupArticles,
+            LocalAutoCleanupRetention provides settings.autoCleanupRetention,
+            LocalAutoCleanupIncludeUnread provides settings.autoCleanupIncludeUnread,
+            LocalAutoCleanupKeepStarred provides settings.autoCleanupKeepStarred,
         ) {
             content()
         }

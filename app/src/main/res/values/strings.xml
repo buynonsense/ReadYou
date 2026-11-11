@@ -386,4 +386,55 @@
     <string name="parse_full_content_desc">Fetch full articles from webpages</string>
     <string name="enable">Enable</string>
     <string name="disable">Disable</string>
+
+    <!-- Article cleanup -->
+    <string name="article_cleanup">Article cleanup</string>
+    <string name="article_cleanup_desc">Clean up history articles manually or automatically</string>
+    <string name="cleanup_statistics">Statistics</string>
+    <string name="cleanup_total_articles">Articles</string>
+    <string name="cleanup_unread_articles">Unread</string>
+    <string name="cleanup_read_articles">Read</string>
+    <string name="cleanup_starred_articles">Starred</string>
+    <string name="cleanup_auto">Automatic cleanup</string>
+    <string name="cleanup_auto_enable">Auto cleanup after sync</string>
+    <string name="cleanup_retention">Keep articles for</string>
+    <string name="retention_1_month">1 month</string>
+    <string name="retention_3_months">3 months</string>
+    <string name="retention_6_months">6 months</string>
+    <string name="retention_1_year">1 year</string>
+    <string name="retention_2_years">2 years</string>
+    <string name="cleanup_include_unread">Also delete unread articles</string>
+    <string name="cleanup_keep_starred">Keep starred articles</string>
+    <string name="cleanup_auto_tips">When enabled, articles older than the retention period will be deleted from this device after each sync. The deletion cannot be undone.</string>
+    <string name="cleanup_manual">Manual cleanup</string>
+    <string name="cleanup_now">Clean up now</string>
+    <string name="cleanup_now_desc">Delete old articles by chosen criteria</string>
+    <string name="cleanup_dialog_title">Clean up articles</string>
+    <string name="cleanup_preview">%1$d articles will be deleted</string>
+    <string name="cleanup_confirm">Clean up</string>
+    <string name="cleanup_done_toast">Deleted %1$d articles</string>
+    <string name="cleanup_manual_tips">Only articles of the current account are affected. Deleted articles are recorded as archived, so the next sync will not re-add them.</string>
+
+    <!-- WebDAV sync -->
+    <string name="webdav_sync">WebDAV sync</string>
+    <string name="webdav_sync_section">Sync</string>
+    <string name="webdav_remote_path">Remote directory</string>
+    <string name="webdav_test">Test connection</string>
+    <string name="webdav_test_success">Connection successful</string>
+    <string name="webdav_unauthorized">Authentication failed, check username and password</string>
+    <string name="webdav_sync_now">Sync now</string>
+    <string name="webdav_sync_now_desc">Download, merge and upload the backup</string>
+    <string name="webdav_upload">Upload backup</string>
+    <string name="webdav_upload_desc">Overwrite the remote backup with this device\'s data</string>
+    <string name="webdav_restore">Restore from backup</string>
+    <string name="webdav_restore_desc">Merge the remote backup into this device</string>
+    <string name="webdav_auto_sync">Auto sync after RSS sync</string>
+    <string name="webdav_last_sync">Last sync</string>
+    <string name="webdav_never_synced">Never</string>
+    <string name="webdav_no_backup">No backup found on the server</string>
+    <string name="webdav_server_required_toast">Please configure the server URL first</string>
+    <string name="webdav_backup_success">Backup uploaded</string>
+    <string name="webdav_sync_success">Sync completed: %1$d groups added, %2$d feeds added, %3$d articles added, %4$d articles updated</string>
+    <string name="webdav_failed">Failed: %1$s</string>
+    <string name="webdav_tips">WebDAV sync stores the current account\'s subscriptions and article states in a JSON backup on your own server. Use the same server URL and directory on all devices. When article states conflict, the most recent backup wins.</string>
 </resources>

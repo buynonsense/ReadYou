@@ -89,5 +89,11 @@ fun Preferences.toSettings(): Settings {
 
         // Languages
         languages = LanguagesPreference.fromPreferences(this),
+
+        // Article cleanup
+        autoCleanupArticles = AutoCleanupArticlesPreference.fromPreferences(this),
+        autoCleanupRetention = ArticleCleanupRetentionPreference.fromPreferences(this),
+        autoCleanupIncludeUnread = AutoCleanupIncludeUnreadPreference.fromPreferences(this),
+        autoCleanupKeepStarred = AutoCleanupKeepStarredPreference.fromPreferences(this),
     )
 }

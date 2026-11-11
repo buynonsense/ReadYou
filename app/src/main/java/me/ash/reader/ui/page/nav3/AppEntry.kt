@@ -37,6 +37,7 @@ import me.ash.reader.ui.page.settings.accounts.AccountDetailsPage
 import me.ash.reader.ui.page.settings.accounts.AccountViewModel
 import me.ash.reader.ui.page.settings.accounts.AccountsPage
 import me.ash.reader.ui.page.settings.accounts.AddAccountsPage
+import me.ash.reader.ui.page.settings.cleanup.ArticleCleanupPage
 import me.ash.reader.ui.page.settings.color.ColorAndStylePage
 import me.ash.reader.ui.page.settings.color.DarkThemePage
 import me.ash.reader.ui.page.settings.color.feeds.FeedsPageStylePage
@@ -52,6 +53,8 @@ import me.ash.reader.ui.page.settings.languages.LanguagesPage
 import me.ash.reader.ui.page.settings.tips.LicenseListPage
 import me.ash.reader.ui.page.settings.tips.TipsAndSupportPage
 import me.ash.reader.ui.page.settings.troubleshooting.TroubleshootingPage
+import me.ash.reader.ui.page.settings.webdav.WebDavSyncPage
+import me.ash.reader.ui.page.settings.webdav.WebDavSyncViewModel
 import me.ash.reader.ui.page.startup.StartupPage
 
 private const val INITIAL_OFFSET_FACTOR = 0.10f
@@ -181,6 +184,7 @@ fun AppEntry(backStack: NavBackStack<NavKey>) {
                             SettingsPage(
                                 onBack = onBack,
                                 navigateToAccounts = { backStack.add(Route.Accounts) },
+                                navigateToArticleCleanup = { backStack.add(Route.ArticleCleanup) },
                                 navigateToColorAndStyle = { backStack.add(Route.ColorAndStyle) },
                                 navigateToInteraction = { backStack.add(Route.Interaction) },
                                 navigateToLanguages = { backStack.add(Route.Languages) },
@@ -209,6 +213,9 @@ fun AppEntry(backStack: NavBackStack<NavKey>) {
                                     },
                                 onBack = onBack,
                                 navigateToFeeds = { backStack.add(Route.Feeds) },
+                                navigateToWebDavSync = {
+                                    backStack.add(Route.WebDavSync(key.accountId))
+                                },
                             )
                         }
                     Route.AddAccounts ->
@@ -263,6 +270,18 @@ fun AppEntry(backStack: NavBackStack<NavKey>) {
                     Route.ReadingPageImage -> NavEntry(key) { ReadingImagePage(onBack = onBack) }
                     Route.ReadingPageVideo -> NavEntry(key) { ReadingVideoPage(onBack = onBack) }
                     Route.Interaction -> NavEntry(key) { InteractionPage(onBack = onBack) }
+                    Route.ArticleCleanup ->
+                        NavEntry(key) { ArticleCleanupPage(onBack = onBack) }
+                    is Route.WebDavSync ->
+                        NavEntry(key) {
+                            WebDavSyncPage(
+                                viewModel =
+                                    hiltViewModel<WebDavSyncViewModel>().also {
+                                        it.initData(key.accountId)
+                                    },
+                                onBack = onBack,
+                            )
+                        }
                     Route.Languages -> NavEntry(key) { LanguagesPage(onBack = onBack) }
                     Route.Troubleshooting -> NavEntry(key) { TroubleshootingPage(onBack = onBack) }
                     Route.TipsAndSupport ->

@@ -79,6 +79,7 @@ fun AccountDetailsPage(
     viewModel: AccountViewModel,
     onBack: () -> Unit,
     navigateToFeeds: () -> Unit,
+    navigateToWebDavSync: () -> Unit,
 ) {
     val uiState = viewModel.accountUiState.collectAsStateValue()
     val context = LocalContext.current
@@ -229,6 +230,10 @@ fun AccountDetailsPage(
                         title = stringResource(R.string.keep_archived_articles),
                         desc = selectedAccount?.keepArchived?.toDesc(context),
                         onClick = { keepArchivedDialogVisible = true },
+                    ) {}
+                    SettingItem(
+                        title = stringResource(R.string.webdav_sync),
+                        onClick = navigateToWebDavSync,
                     ) {}
                     // SettingItem(
                     //     title = stringResource(R.string.block_list),

@@ -350,4 +350,55 @@
     <string name="parse_full_content_desc">从网页获取完整内容</string>
     <string name="enable">启用</string>
     <string name="disable">停用</string>
+
+    <!-- 文章清理 -->
+    <string name="article_cleanup">历史文章管理</string>
+    <string name="article_cleanup_desc">手动清理历史文章，或设置自动清理</string>
+    <string name="cleanup_statistics">统计</string>
+    <string name="cleanup_total_articles">文章总数</string>
+    <string name="cleanup_unread_articles">未读</string>
+    <string name="cleanup_read_articles">已读</string>
+    <string name="cleanup_starred_articles">星标</string>
+    <string name="cleanup_auto">自动清理</string>
+    <string name="cleanup_auto_enable">同步后自动清理</string>
+    <string name="cleanup_retention">保留期限</string>
+    <string name="retention_1_month">1 个月</string>
+    <string name="retention_3_months">3 个月</string>
+    <string name="retention_6_months">6 个月</string>
+    <string name="retention_1_year">1 年</string>
+    <string name="retention_2_years">2 年</string>
+    <string name="cleanup_include_unread">同时删除未读文章</string>
+    <string name="cleanup_keep_starred">保留星标文章</string>
+    <string name="cleanup_auto_tips">启用后，每次同步完成时会自动删除超过保留期限的文章，删除操作无法撤销。</string>
+    <string name="cleanup_manual">手动清理</string>
+    <string name="cleanup_now">立即清理</string>
+    <string name="cleanup_now_desc">按所选条件删除旧文章</string>
+    <string name="cleanup_dialog_title">清理文章</string>
+    <string name="cleanup_preview">将删除 %1$d 篇文章</string>
+    <string name="cleanup_confirm">清理</string>
+    <string name="cleanup_done_toast">已清理 %1$d 篇文章</string>
+    <string name="cleanup_manual_tips">仅影响当前账号的文章。被删除的文章会记录为已归档，之后的同步不会重新添加它们。</string>
+
+    <!-- WebDAV 同步 -->
+    <string name="webdav_sync">WebDAV 同步</string>
+    <string name="webdav_sync_section">同步</string>
+    <string name="webdav_remote_path">远程目录</string>
+    <string name="webdav_test">测试连接</string>
+    <string name="webdav_test_success">连接成功</string>
+    <string name="webdav_unauthorized">认证失败，请检查用户名和密码</string>
+    <string name="webdav_sync_now">立即同步</string>
+    <string name="webdav_sync_now_desc">下载远程备份、合并后重新上传</string>
+    <string name="webdav_upload">上传备份</string>
+    <string name="webdav_upload_desc">用本机数据覆盖远程备份</string>
+    <string name="webdav_restore">从备份恢复</string>
+    <string name="webdav_restore_desc">将远程备份合并到本机</string>
+    <string name="webdav_auto_sync">RSS 同步后自动同步</string>
+    <string name="webdav_last_sync">上次同步</string>
+    <string name="webdav_never_synced">从未同步</string>
+    <string name="webdav_no_backup">服务器上没有找到备份</string>
+    <string name="webdav_server_required_toast">请先配置服务器地址</string>
+    <string name="webdav_backup_success">备份已上传</string>
+    <string name="webdav_sync_success">同步完成：新增 %1$d 个分组、%2$d 个订阅源、%3$d 篇文章，更新 %4$d 篇文章状态</string>
+    <string name="webdav_failed">操作失败：%1$s</string>
+    <string name="webdav_tips">WebDAV 同步会将当前账号的订阅源和文章状态以 JSON 备份的形式保存到您自己的服务器。请在所有设备上使用相同的服务器地址和目录。当文章状态冲突时，以最近一次备份为准。</string>
 </resources>

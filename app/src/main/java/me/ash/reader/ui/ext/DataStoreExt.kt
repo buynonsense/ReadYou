@@ -201,6 +201,20 @@ sealed interface PreferencesKey {
         // Languages
         const val languages = "languages"
 
+        // Article cleanup
+        const val autoCleanupArticles = "autoCleanupArticles"
+        const val autoCleanupRetention = "autoCleanupRetention"
+        const val autoCleanupIncludeUnread = "autoCleanupIncludeUnread"
+        const val autoCleanupKeepStarred = "autoCleanupKeepStarred"
+
+        // WebDAV sync
+        const val webdavServerUrl = "webdavServerUrl"
+        const val webdavUsername = "webdavUsername"
+        const val webdavPassword = "webdavPassword"
+        const val webdavRemotePath = "webdavRemotePath"
+        const val webdavAutoSync = "webdavAutoSync"
+        const val webdavLastSyncTime = "webdavLastSyncTime"
+
         private val keyList =
             listOf(
                 // Version
@@ -275,6 +289,18 @@ sealed interface PreferencesKey {
                 IntKey(sharedContent),
                 // Languages
                 IntKey(languages),
+                // Article cleanup
+                BooleanKey(autoCleanupArticles),
+                LongKey(autoCleanupRetention),
+                BooleanKey(autoCleanupIncludeUnread),
+                BooleanKey(autoCleanupKeepStarred),
+                // WebDAV sync
+                StringKey(webdavServerUrl),
+                StringKey(webdavUsername),
+                StringKey(webdavPassword),
+                StringKey(webdavRemotePath),
+                BooleanKey(webdavAutoSync),
+                LongKey(webdavLastSyncTime),
             )
 
         val keys = keyList.associateBy { it.name }
@@ -362,6 +388,20 @@ data class DataStoreKey<T>(val key: Preferences.Key<T>, val type: Class<T>) {
 
         // Languages
         const val languages = "languages"
+
+        // Article cleanup
+        const val autoCleanupArticles = "autoCleanupArticles"
+        const val autoCleanupRetention = "autoCleanupRetention"
+        const val autoCleanupIncludeUnread = "autoCleanupIncludeUnread"
+        const val autoCleanupKeepStarred = "autoCleanupKeepStarred"
+
+        // WebDAV sync
+        const val webdavServerUrl = "webdavServerUrl"
+        const val webdavUsername = "webdavUsername"
+        const val webdavPassword = "webdavPassword"
+        const val webdavRemotePath = "webdavRemotePath"
+        const val webdavAutoSync = "webdavAutoSync"
+        const val webdavLastSyncTime = "webdavLastSyncTime"
 
         val keys: MutableMap<String, DataStoreKey<*>> =
             mutableMapOf(
@@ -513,6 +553,34 @@ data class DataStoreKey<T>(val key: Preferences.Key<T>, val type: Class<T>) {
                 sharedContent to DataStoreKey(intPreferencesKey(sharedContent), Int::class.java),
                 // Languages
                 languages to DataStoreKey(intPreferencesKey(languages), Int::class.java),
+                // Article cleanup
+                autoCleanupArticles to
+                    DataStoreKey(booleanPreferencesKey(autoCleanupArticles), Boolean::class.java),
+                autoCleanupRetention to
+                    DataStoreKey(longPreferencesKey(autoCleanupRetention), Long::class.java),
+                autoCleanupIncludeUnread to
+                    DataStoreKey(
+                        booleanPreferencesKey(autoCleanupIncludeUnread),
+                        Boolean::class.java,
+                    ),
+                autoCleanupKeepStarred to
+                    DataStoreKey(
+                        booleanPreferencesKey(autoCleanupKeepStarred),
+                        Boolean::class.java,
+                    ),
+                // WebDAV sync
+                webdavServerUrl to
+                    DataStoreKey(stringPreferencesKey(webdavServerUrl), String::class.java),
+                webdavUsername to
+                    DataStoreKey(stringPreferencesKey(webdavUsername), String::class.java),
+                webdavPassword to
+                    DataStoreKey(stringPreferencesKey(webdavPassword), String::class.java),
+                webdavRemotePath to
+                    DataStoreKey(stringPreferencesKey(webdavRemotePath), String::class.java),
+                webdavAutoSync to
+                    DataStoreKey(booleanPreferencesKey(webdavAutoSync), Boolean::class.java),
+                webdavLastSyncTime to
+                    DataStoreKey(longPreferencesKey(webdavLastSyncTime), Long::class.java),
             )
     }
 }

@@ -55,6 +55,12 @@ sealed interface Route : NavKey {
     // Interaction
     @Serializable data object Interaction : Route
 
+    // Article cleanup
+    @Serializable data object ArticleCleanup : Route
+
+    // WebDAV sync
+    @Serializable data class WebDavSync(val accountId: Int) : Route
+
     // Languages
     @Serializable data object Languages : Route
 
