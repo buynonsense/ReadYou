@@ -26,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -46,6 +47,7 @@ import me.ash.reader.ui.ext.collectAsStateValue
 import me.ash.reader.ui.ext.showToast
 import me.ash.reader.ui.ext.showToastSuspend
 import me.ash.reader.ui.page.common.RouteName
+import me.ash.reader.ui.page.settings.accounts.connection.ServerSecuritySettings
 import me.ash.reader.ui.page.settings.accounts.AccountViewModel
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -57,6 +59,7 @@ fun AddFreshRSSAccountDialog(
     accountViewModel: AccountViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val focusManager = LocalFocusManager.current
     val uiState = viewModel.additionUiState.collectAsStateValue()
     val accountUiState = accountViewModel.accountUiState.collectAsStateValue()
@@ -103,6 +106,7 @@ fun AddFreshRSSAccountDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState())
             ) {
                 Spacer(modifier = Modifier.height(10.dp))
+                ServerSecuritySettings(freshRSSServerUrl)
                 RYOutlineTextField(
                     modifier = Modifier.fillMaxWidth(),
                     readOnly = accountUiState.isLoading,
@@ -159,7 +163,7 @@ fun AddFreshRSSAccountDialog(
                     accountViewModel.addAccount(
                         Account(
                             type = AccountType.FreshRSS,
-                            name = context.getString(R.string.fresh_rss),
+                            name = resources.getString(R.string.fresh_rss),
                             securityKey = FreshRSSSecurityKey(
                                 serverUrl = freshRSSServerUrl,
                                 username = freshRSSUsername,

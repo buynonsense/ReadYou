@@ -71,8 +71,8 @@ constructor(
     override val deleteSubscription: Boolean = false
     override val updateSubscription: Boolean = false
 
-    private suspend fun getFeverAPI() =
-        FeverSecurityKey(accountService.getCurrentAccount().securityKey).run {
+    private fun getFeverAPI(account: Account) =
+        FeverSecurityKey(account.securityKey).run {
             FeverAPI.getInstance(
                 context = context,
                 serverUrl = serverUrl!!,
@@ -85,7 +85,7 @@ constructor(
         }
 
     override suspend fun validCredentials(account: Account): Boolean =
-        getFeverAPI().validCredentials() > 0
+        getFeverAPI(account).validCredentials() > 0
 
     override suspend fun clearAuthorization() {
         FeverAPI.clearInstance()
@@ -102,7 +102,7 @@ constructor(
         throw FeverAPIException("Unsupported")
     }
 
-    override suspend fun addGroup(destFeed: Feed?, newGroupName: String): String {
+    override suspend fun addGroup(destFeed: Feed?, newGroupName: String, accountId: Int): String {
         throw FeverAPIException("Unsupported")
     }
 
@@ -154,7 +154,7 @@ constructor(
             val account = accountService.getAccountById(accountId)!!
             check(account.type.id == AccountType.Fever.id) { "account type is invalid" }
 
-            val feverAPI = getFeverAPI()
+            val feverAPI = getFeverAPI(account)
 
             // 1. Fetch the Fever groups
             val groupsBody = feverAPI.getGroups()
@@ -306,75 +306,29 @@ constructor(
             }
 
             Log.i("RLog", "onCompletion: ${System.currentTimeMillis() - preTime}")
-            accountService.update(
-                account.copy(
+            accountService.update(accountId) {
+                copy(
                     updateAt = Date(),
                     lastArticleId =
                         if (lastSeenId.isNotEmpty()) {
                             accountId.spacerDollar(lastSeenId)
-                        } else account.lastArticleId,
+                        } else lastArticleId,
                 )
-            )
+            }
             ListenableWorker.Result.success()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e("RLog", "On sync exception: ${e.message}", e)
             //                withContext(mainDispatcher) {
             //                    context.showToast(e.message)
             //                }
-            ListenableWorker.Result.failure()
-        }
-    }
-
-    override suspend fun markAsRead(
-        groupId: String?,
-        feedId: String?,
-        articleId: String?,
-        before: Date?,
-        isUnread: Boolean,
-    ) {
-        super.markAsRead(groupId, feedId, articleId, before, isUnread)
-        val feverAPI = getFeverAPI()
-        val beforeUnixTimestamp = (before?.time ?: Date(Long.MAX_VALUE).time) / 1000
-        when {
-            groupId != null -> {
-                feverAPI.markGroup(
-                    status = if (isUnread) FeverDTO.StatusEnum.Unread else FeverDTO.StatusEnum.Read,
-                    id = groupId.dollarLast().toLong(),
-                    before = beforeUnixTimestamp,
-                )
-            }
-
-            feedId != null -> {
-                feverAPI.markFeed(
-                    status = if (isUnread) FeverDTO.StatusEnum.Unread else FeverDTO.StatusEnum.Read,
-                    id = feedId.dollarLast().toLong(),
-                    before = beforeUnixTimestamp,
-                )
-            }
-
-            articleId != null -> {
-                feverAPI.markItem(
-                    status = if (isUnread) FeverDTO.StatusEnum.Unread else FeverDTO.StatusEnum.Read,
-                    id = articleId.dollarLast(),
-                )
-            }
-
-            else -> {
-                feedDao.queryAll(accountService.getCurrentAccountId()).forEach {
-                    feverAPI.markFeed(
-                        status =
-                            if (isUnread) FeverDTO.StatusEnum.Unread else FeverDTO.StatusEnum.Read,
-                        id = it.id.dollarLast().toLong(),
-                        before = beforeUnixTimestamp,
-                    )
-                }
-            }
+            ListenableWorker.Result.failure(androidx.work.workDataOf("error" to (e.message ?: "Fever sync failed")))
         }
     }
 
     @CheckResult
-    override suspend fun syncReadStatus(articleIds: Set<String>, isUnread: Boolean): Set<String> {
-        val feverAPI = getFeverAPI()
+    override suspend fun syncReadStatus(accountId: Int, articleIds: Set<String>, isUnread: Boolean): Set<String> {
+        val feverAPI = getFeverAPI(requireNotNull(accountService.getAccountById(accountId)))
         val syncedEntries = mutableSetOf<String>()
         articleIds
             .takeIf { it.isNotEmpty() }
@@ -389,12 +343,15 @@ constructor(
         return syncedEntries
     }
 
-    override suspend fun markAsStarred(articleId: String, isStarred: Boolean) {
-        super.markAsStarred(articleId, isStarred)
-        val feverAPI = getFeverAPI()
-        feverAPI.markItem(
-            status = if (isStarred) FeverDTO.StatusEnum.Saved else FeverDTO.StatusEnum.Unsaved,
-            id = articleId.dollarLast(),
-        )
+    override suspend fun syncStarredStatus(accountId: Int, articleIds: Set<String>, isStarred: Boolean): Set<String> {
+        val api = getFeverAPI(requireNotNull(accountService.getAccountById(accountId)))
+        articleIds.forEach { id ->
+            api.markItem(
+                status = if (isStarred) FeverDTO.StatusEnum.Saved else FeverDTO.StatusEnum.Unsaved,
+                id = id.dollarLast(),
+            )
+        }
+        return articleIds
     }
+
 }

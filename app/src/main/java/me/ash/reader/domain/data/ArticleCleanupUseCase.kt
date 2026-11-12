@@ -1,21 +1,22 @@
 package me.ash.reader.domain.data
 
-import android.util.Log
+import timber.log.Timber
 import java.util.Date
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
-import me.ash.reader.domain.model.article.ArchivedArticle
-import me.ash.reader.domain.service.AccountService
 import me.ash.reader.domain.repository.ArticleDao
-import me.ash.reader.domain.repository.FeedDao
 import me.ash.reader.infrastructure.di.IODispatcher
+import me.ash.reader.infrastructure.rss.ReaderCacheHelper
+import me.ash.reader.infrastructure.coroutine.runCatchingCancellable
+import kotlinx.coroutines.withContext
 import me.ash.reader.infrastructure.preference.ArticleCleanupRetentionPreference
 import me.ash.reader.infrastructure.preference.AutoCleanupArticlesPreference
 import me.ash.reader.infrastructure.preference.AutoCleanupIncludeUnreadPreference
 import me.ash.reader.infrastructure.preference.AutoCleanupKeepStarredPreference
-import me.ash.reader.infrastructure.preference.SettingsProvider
+import me.ash.reader.infrastructure.preference.ArticleCleanupSettingsStore
+import me.ash.reader.domain.service.AccountOperationLock
 
 /**
  * Cleans up history articles by age, either manually from the
@@ -25,10 +26,10 @@ class ArticleCleanupUseCase
 @Inject
 constructor(
     private val articleDao: ArticleDao,
-    private val feedDao: FeedDao,
-    private val accountService: AccountService,
-    private val settingsProvider: SettingsProvider,
+    private val cacheHelper: ReaderCacheHelper,
+    private val settingsStore: ArticleCleanupSettingsStore,
     @IODispatcher private val ioDispatcher: CoroutineDispatcher,
+    private val accountLock: AccountOperationLock,
 ) {
 
     data class Stats(
@@ -73,27 +74,15 @@ constructor(
         includeUnread: Boolean,
         keepStarred: Boolean,
     ): Int {
-        val before = cutoff(retention)
-        val identities =
-            articleDao.queryArticleIdentitiesBefore(
-                accountId = accountId,
-                before = before,
-                includeUnread = includeUnread,
-                keepStarred = keepStarred,
+        return withContext(ioDispatcher) {
+            accountLock.withAccount(accountId) {
+            val deleted = articleDao.cleanupBefore(
+                accountId, cutoff(retention), includeUnread, keepStarred,
             )
-        val deleted =
-            articleDao.deleteArticlesBefore(
-                accountId = accountId,
-                before = before,
-                includeUnread = includeUnread,
-                keepStarred = keepStarred,
-            )
-        if (identities.isNotEmpty()) {
-            feedDao.insertArchivedArticles(
-                identities.map { ArchivedArticle(feedId = it.feedId, link = it.link) }
-            )
+            deleted.forEach { cacheHelper.deleteCacheFor(it.id, accountId) }
+            deleted.size
+            }
         }
-        return deleted
     }
 
     /**
@@ -101,21 +90,21 @@ constructor(
      * A no-op when auto cleanup is disabled.
      */
     suspend fun autoCleanup(accountId: Int) {
-        val settings = settingsProvider.settings
-        if (settings.autoCleanupArticles != AutoCleanupArticlesPreference.ON) return
-        runCatching {
+        val settings = settingsStore.load(accountId)
+        if (!settings.enabled) return
+        runCatchingCancellable {
             cleanup(
                 accountId = accountId,
-                retention = settings.autoCleanupRetention,
-                includeUnread = settings.autoCleanupIncludeUnread.value,
-                keepStarred = settings.autoCleanupKeepStarred.value,
+                retention = settings.retention,
+                includeUnread = settings.includeUnread,
+                keepStarred = settings.keepStarred,
             )
         }.onSuccess { deleted ->
             if (deleted > 0) {
-                Log.i("RLog", "ArticleCleanupUseCase: auto cleanup deleted $deleted articles")
+                Timber.i("Auto cleanup deleted %d articles for account %d", deleted, accountId)
             }
         }.onFailure {
-            Log.e("RLog", "ArticleCleanupUseCase: auto cleanup failed", it)
+            Timber.e(it, "Auto cleanup failed for account %d", accountId)
         }
     }
 

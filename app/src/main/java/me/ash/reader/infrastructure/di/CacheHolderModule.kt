@@ -11,9 +11,12 @@ import kotlinx.coroutines.CoroutineScope
 import me.ash.reader.domain.service.RssService
 import me.ash.reader.domain.data.DiffMapHolder
 import me.ash.reader.domain.service.AccountService
+import me.ash.reader.domain.service.ArticleStateOutbox
+import androidx.work.WorkManager
 import me.ash.reader.infrastructure.preference.SettingsProvider
 import me.ash.reader.infrastructure.rss.ReaderCacheHelper
 import me.ash.reader.infrastructure.rss.RssHelper
+import me.ash.reader.domain.repository.ArticleSearchDao
 import javax.inject.Singleton
 
 @Module
@@ -26,10 +29,11 @@ object CacheHolderModule {
         @ApplicationScope applicationScope: CoroutineScope,
         @IODispatcher ioDispatcher: CoroutineDispatcher,
         accountService: AccountService,
-        rssService: RssService,
+        outbox: ArticleStateOutbox,
+        workManager: WorkManager,
     ): DiffMapHolder {
         return DiffMapHolder(
-            context = context, applicationScope, ioDispatcher, accountService, rssService
+            context = context, applicationScope, ioDispatcher, accountService, outbox, workManager
         )
     }
 
@@ -39,10 +43,10 @@ object CacheHolderModule {
         @ApplicationContext context: Context,
         @IODispatcher ioDispatcher: CoroutineDispatcher,
         rssHelper: RssHelper,
-        accountService: AccountService,
+        articleSearchDao: ArticleSearchDao,
     ): ReaderCacheHelper = ReaderCacheHelper(
         context = context, ioDispatcher = ioDispatcher,
         rssHelper = rssHelper,
-        accountService = accountService,
+        articleSearchDao = articleSearchDao,
     )
 }

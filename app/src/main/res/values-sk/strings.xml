@@ -6,6 +6,7 @@
         <item quantity="one">%1$d obľúbená položka</item>
         <item quantity="few">%1$d obľúbené položky</item>
         <item quantity="other">%1$d obľúbených položiek</item>
+    <item quantity="many">%1$d obľúbených položiek</item>
     </plurals>
     <string name="feeds">Informačné kanály</string>
     <string name="syncing">Synchronizácia…</string>
@@ -81,6 +82,7 @@
         <item quantity="one">%1$d archivovaná položka</item>
         <item quantity="few">%1$d archivované položky</item>
         <item quantity="other">%1$d archivovaných položiek</item>
+    <item quantity="many">%1$d archivovaných položiek</item>
     </plurals>
     <string name="confirm">Potvrdiť</string>
     <string name="parse_full_content">Načítať celý obsah</string>
@@ -90,6 +92,7 @@
         <item quantity="one">%1$d neprečítaná položka</item>
         <item quantity="few">%1$d neprečítané položky</item>
         <item quantity="other">%1$d neprečítaných položiek</item>
+    <item quantity="many">%1$d neprečítaných položiek</item>
     </plurals>
     <string name="clear_articles_group_tips">Vymazať všetky archivované články v skupine \"%1$s\"</string>
     <string name="all_move_to_group_tips">Presunúť všetky informačné kanály v skupine \"%1$s\" do skupiny \"%2$s\"</string>

@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
@@ -71,8 +73,9 @@ class FeedsViewModel @Inject constructor(
     var currentJob: Job? = null
 
     fun sync() {
+        val account = _feedsUiState.value.account ?: return
         applicationScope.launch(ioDispatcher) {
-            rssService.get().doSyncOneTime()
+            rssService.get(account.type.id).doSyncOneTime(requireNotNull(account.id))
         }
     }
 
@@ -91,70 +94,20 @@ class FeedsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            filterStateUseCase.filterStateFlow.mapLatest { it.filter }
-                .combine(accountFlow) { filter, account ->
-                    filter
-                }
-                .collect {
-                    currentJob?.cancel()
-                    currentJob = when (it) {
-                        Filter.Unread -> pullUnreadFeeds()
-                        Filter.Starred -> pullStarredFeeds()
-                        else -> pullAllFeeds()
+            combine(filterStateUseCase.filterStateFlow, accountFlow.filterNotNull()) { state, account ->
+                state.filter to account
+            }.collectLatest { (filter, account) ->
+                val counts = rssService.get(account.type.id).pullImportant(filter.isStarred(), filter.isUnread(), requireNotNull(account.id))
+                counts.collect { values ->
+                    val sum = values.values.sum()
+                    val resource = when (filter) {
+                        Filter.Unread -> R.plurals.unread_desc
+                        Filter.Starred -> R.plurals.starred_desc
+                        else -> R.plurals.all_desc
                     }
-                }
-        }
-    }
-
-    private fun pullAllFeeds(): Job {
-        val articleCountMapFlow =
-            rssService.get().pullImportant(isStarred = false, isUnread = false)
-
-        return viewModelScope.launch {
-            launch {
-                articleCountMapFlow.mapLatest {
-                    val sum = it.values.sum()
-                    androidStringsHelper.getQuantityString(R.plurals.all_desc, sum, sum)
-                }.flowOn(defaultDispatcher).collect { text ->
-                    _feedsUiState.update { it.copy(importantSum = text) }
+                    _feedsUiState.update { it.copy(importantSum = androidStringsHelper.getQuantityString(resource, sum, sum)) }
                 }
             }
-        }
-    }
-
-    private fun pullStarredFeeds(): Job {
-        val starredCountMap = rssService.get().pullImportant(isStarred = true, isUnread = false)
-
-        return viewModelScope.launch {
-            starredCountMap.mapLatest {
-                val sum = it.values.sum()
-                androidStringsHelper.getQuantityString(R.plurals.starred_desc, sum, sum)
-            }.flowOn(defaultDispatcher).collect { text ->
-                _feedsUiState.update { it.copy(importantSum = text) }
-            }
-        }
-    }
-
-    @OptIn(FlowPreview::class)
-    private fun pullUnreadFeeds(): Job {
-        val unreadCountMapFlow = rssService.get().pullImportant(isStarred = false, isUnread = true)
-
-        return viewModelScope.launch {
-            diffMapHolder.diffMapSnapshotFlow
-                .combine(
-                    unreadCountMapFlow
-                ) { diffMap, unreadCountMap ->
-                    val sum = unreadCountMap.values.sum()
-                    val combinedSum =
-                        sum + diffMap.values.sumOf { if (it.isUnread) 1.toInt() else -1 } // KT-46360
-                    androidStringsHelper.getQuantityString(
-                        R.plurals.unread_desc,
-                        combinedSum,
-                        combinedSum
-                    )
-                }.debounce(200L).flowOn(defaultDispatcher).collect { text ->
-                    _feedsUiState.update { it.copy(importantSum = text) }
-                }
         }
     }
 

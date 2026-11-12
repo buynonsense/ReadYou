@@ -71,7 +71,7 @@ constructor(
             applicationScope.launch {
                 selectedGroup(
                     rssService
-                        .get()
+                        .forAccount(requireNotNull(_feedOptionUiState.value.feed).accountId)
                         .addGroup(
                             destFeed = _feedOptionUiState.value.feed,
                             newGroupName = _feedOptionUiState.value.newGroupContent,
@@ -86,7 +86,7 @@ constructor(
         applicationScope.launch(ioDispatcher) {
             _feedOptionUiState.value.feed?.let {
                 rssService
-                    .get()
+                    .forAccount(it.accountId)
                     .moveFeed(originGroupId = it.groupId, feed = it.copy(groupId = groupId))
                 fetchFeed(it.id)
             }
@@ -99,7 +99,7 @@ constructor(
                 val isFullContent = !it.isFullContent
                 val isBrowser = if (isFullContent) false else it.isBrowser
                 rssService
-                    .get()
+                    .forAccount(it.accountId)
                     .updateFeed(it.copy(isFullContent = isFullContent, isBrowser = isBrowser))
                 fetchFeed(it.id)
             }
@@ -112,7 +112,7 @@ constructor(
                 val isBrowser = !it.isBrowser
                 val isFullContent = if (isBrowser) false else it.isFullContent
                 rssService
-                    .get()
+                    .forAccount(it.accountId)
                     .updateFeed(it.copy(isBrowser = isBrowser, isFullContent = isFullContent))
                 fetchFeed(it.id)
             }
@@ -122,7 +122,7 @@ constructor(
     fun changeAllowNotificationPreset() {
         viewModelScope.launch(ioDispatcher) {
             _feedOptionUiState.value.feed?.let {
-                rssService.get().updateFeed(it.copy(isNotification = !it.isNotification))
+                rssService.forAccount(it.accountId).updateFeed(it.copy(isNotification = !it.isNotification))
                 fetchFeed(it.id)
             }
         }
@@ -131,7 +131,7 @@ constructor(
     fun delete(callback: () -> Unit = {}) {
         _feedOptionUiState.value.feed?.let {
             applicationScope.launch(ioDispatcher) {
-                rssService.get().deleteFeed(it)
+                rssService.forAccount(it.accountId).deleteFeed(it)
                 withContext(mainDispatcher) { callback() }
             }
         }
@@ -156,7 +156,7 @@ constructor(
     fun clearFeed(callback: () -> Unit = {}) {
         _feedOptionUiState.value.feed?.let {
             viewModelScope.launch(ioDispatcher) {
-                rssService.get().deleteArticles(feed = it)
+                rssService.forAccount(it.accountId).deleteArticles(feed = it)
                 withContext(mainDispatcher) { callback() }
             }
         }
@@ -165,7 +165,7 @@ constructor(
     fun renameFeed() {
         _feedOptionUiState.value.feed?.let {
             applicationScope.launch {
-                rssService.get().renameFeed(it.copy(name = _feedOptionUiState.value.newName))
+                rssService.forAccount(it.accountId).renameFeed(it.copy(name = _feedOptionUiState.value.newName))
                 _feedOptionUiState.update { it.copy(renameDialogVisible = false) }
             }
         }
@@ -205,7 +205,7 @@ constructor(
     fun changeFeedUrl() {
         _feedOptionUiState.value.feed?.let {
             applicationScope.launch {
-                rssService.get().changeFeedUrl(it.copy(url = _feedOptionUiState.value.newUrl))
+                rssService.forAccount(it.accountId).changeFeedUrl(it.copy(url = _feedOptionUiState.value.newUrl))
                 _feedOptionUiState.update { it.copy(changeUrlDialogVisible = false) }
             }
         }

@@ -19,7 +19,7 @@ class FeverAPI private constructor(
     private val httpUsername: String? = null,
     private val httpPassword: String? = null,
     clientCertificateAlias: String? = null,
-) : ProviderAPI(context, clientCertificateAlias) {
+) : ProviderAPI(context, clientCertificateAlias, serverUrl) {
 
     private suspend inline fun <reified T> postRequest(query: String?): T {
         val response = client.newCall(

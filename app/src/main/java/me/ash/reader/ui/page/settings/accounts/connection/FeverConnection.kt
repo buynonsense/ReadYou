@@ -25,7 +25,7 @@ import me.ash.reader.ui.page.settings.accounts.AccountViewModel
 fun LazyItemScope.FeverConnection(account: Account, viewModel: AccountViewModel = hiltViewModel()) {
     val context = LocalContext.current
 
-    val securityKey by remember { derivedStateOf { FeverSecurityKey(account.securityKey) } }
+    val securityKey by remember(account.securityKey) { derivedStateOf { FeverSecurityKey(account.securityKey) } }
 
     var passwordMask by remember { mutableStateOf(securityKey.password?.mask()) }
 
@@ -38,6 +38,8 @@ fun LazyItemScope.FeverConnection(account: Account, viewModel: AccountViewModel 
     var passwordDialogVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(securityKey.password) { passwordMask = securityKey.password?.mask() }
+
+    ServerSecuritySettings(securityKey.serverUrl.orEmpty())
 
     SettingItem(
         title = stringResource(R.string.server_url),
@@ -80,7 +82,7 @@ fun LazyItemScope.FeverConnection(account: Account, viewModel: AccountViewModel 
         onValueChange = { serverUrlValue = it },
         onDismissRequest = { serverUrlDialogVisible = false },
         onConfirm = {
-            if (securityKey.serverUrl?.isNotBlank() == true) {
+            if (!serverUrlValue.isNullOrBlank()) {
                 securityKey.serverUrl = serverUrlValue
                 save(account, viewModel, securityKey)
                 serverUrlDialogVisible = false
@@ -95,7 +97,7 @@ fun LazyItemScope.FeverConnection(account: Account, viewModel: AccountViewModel 
         onValueChange = { usernameValue = it },
         onDismissRequest = { usernameDialogVisible = false },
         onConfirm = {
-            if (securityKey.username?.isNotEmpty() == true) {
+            if (!usernameValue.isNullOrEmpty()) {
                 securityKey.username = usernameValue
                 save(account, viewModel, securityKey)
                 usernameDialogVisible = false
@@ -111,7 +113,7 @@ fun LazyItemScope.FeverConnection(account: Account, viewModel: AccountViewModel 
         onValueChange = { passwordValue = it },
         onDismissRequest = { passwordDialogVisible = false },
         onConfirm = {
-            if (securityKey.password?.isNotEmpty() == true) {
+            if (!passwordValue.isNullOrEmpty()) {
                 securityKey.password = passwordValue
                 save(account, viewModel, securityKey)
                 passwordDialogVisible = false

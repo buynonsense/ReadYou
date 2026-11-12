@@ -36,6 +36,7 @@ import me.ash.reader.domain.model.article.ArticleWithFeed
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.model.general.MarkAsReadConditions
 import me.ash.reader.domain.service.GoogleReaderRssService
+import me.ash.reader.domain.service.AccountService
 import me.ash.reader.domain.service.LocalRssService
 import me.ash.reader.domain.service.RssService
 import me.ash.reader.domain.service.SyncWorker
@@ -56,6 +57,7 @@ class ArticleListReaderViewModel
 @Inject
 constructor(
     private val rssService: RssService,
+    private val accountService: AccountService,
     @IODispatcher private val ioDispatcher: CoroutineDispatcher,
     @ApplicationScope private val applicationScope: CoroutineScope,
     val diffMapHolder: DiffMapHolder,
@@ -147,25 +149,11 @@ constructor(
         conditions: MarkAsReadConditions,
         isUnread: Boolean,
     ) {
-        applicationScope.launch(ioDispatcher) {
-            rssService
-                .get()
-                .markAsRead(
-                    groupId = groupId,
-                    feedId = feedId,
-                    articleId = articleId,
-                    before = conditions.toDate(),
-                    isUnread = isUnread,
-                )
-        }
+        diffMapHolder.markAsRead(accountService.getCurrentAccountId(), groupId, feedId, articleId, conditions.toDate(), isUnread)
     }
 
     fun updateStarredStatus(articleId: String?, isStarred: Boolean) {
-        applicationScope.launch(ioDispatcher) {
-            if (articleId != null) {
-                rssService.get().markAsStarred(articleId = articleId, isStarred = isStarred)
-            }
-        }
+        if (articleId != null) diffMapHolder.updateStarred(accountService.getCurrentAccountId(), articleId, isStarred)
     }
 
     fun markAsReadFromListByDate(date: Date, isBefore: Boolean) {
@@ -325,7 +313,9 @@ constructor(
         val contentState =
             if (articleWithFeed.feed.isFullContent) {
                 val fullContent =
-                    readerCacheHelper.readFullContent(articleWithFeed.article.id).getOrNull()
+                    readerCacheHelper.readFullContent(
+                        articleWithFeed.article.id, articleWithFeed.article.accountId,
+                    ).getOrNull()
                 if (fullContent != null) ReaderState.FullContent(fullContent)
                 else {
                     renderFullContent()
@@ -378,12 +368,9 @@ constructor(
     }
 
     fun updateStarredStatus(isStarred: Boolean) {
-        applicationScope.launch(ioDispatcher) {
-            _readingUiState.update { it.copy(isStarred = isStarred) }
-            currentArticle?.let {
-                rssService.get().markAsStarred(articleId = it.id, isStarred = isStarred)
-            }
-        }
+        val article = readingUiState.value.articleWithFeed ?: return
+        _readingUiState.update { it.copy(isStarred = isStarred) }
+        diffMapHolder.updateStarred(article, isStarred)
     }
 
     private fun setLoading() {

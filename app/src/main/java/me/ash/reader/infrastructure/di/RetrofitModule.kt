@@ -18,6 +18,6 @@ object RetrofitModule {
 
     @Provides
     @Singleton
-    fun provideAppNetworkDataSource(): NetworkDataSource =
-        NetworkDataSource.getInstance()
+    fun provideAppNetworkDataSource(client: okhttp3.OkHttpClient): NetworkDataSource =
+        NetworkDataSource.getInstance(client)
 }

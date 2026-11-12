@@ -72,7 +72,7 @@ interface GroupDao {
     @Update
     suspend fun updateAll(groups: List<Group>)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(vararg group: Group)
+    @androidx.room.Upsert suspend fun insert(vararg group: Group)
 
     @Update suspend fun update(vararg group: Group)
 

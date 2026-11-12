@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,15 +67,15 @@ fun ArticleCleanupPage(
     viewModel: ArticleCleanupViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
+    val resources = LocalResources.current
     val stats = viewModel.stats.collectAsStateValue(initial = ArticleCleanupUseCase.Stats())
     val uiState = viewModel.uiState.collectAsStateValue()
 
-    val autoCleanupArticles = LocalAutoCleanupArticles.current
-    val autoCleanupRetention = LocalAutoCleanupRetention.current
-    val autoCleanupIncludeUnread = LocalAutoCleanupIncludeUnread.current
-    val autoCleanupKeepStarred = LocalAutoCleanupKeepStarred.current
+    val cleanupSettings = viewModel.settings.collectAsStateValue()
+    val autoCleanupArticles = cleanupSettings.enabled
+    val autoCleanupRetention = cleanupSettings.retention
+    val autoCleanupIncludeUnread = cleanupSettings.includeUnread
+    val autoCleanupKeepStarred = cleanupSettings.keepStarred
 
     var retentionDialogVisible by remember { mutableStateOf(false) }
     var manualRetention by remember {
@@ -104,6 +105,7 @@ fun ArticleCleanupPage(
             LazyColumn {
                 item {
                     DisplayText(text = stringResource(R.string.article_cleanup), desc = "")
+                    uiState.error?.let { Tips(text = it) }
                     Spacer(modifier = Modifier.height(16.dp))
                 }
                 item {
@@ -147,11 +149,11 @@ fun ArticleCleanupPage(
                     SettingItem(
                         title = stringResource(R.string.cleanup_auto_enable),
                         onClick = {
-                            (!autoCleanupArticles).put(context, scope)
+                            viewModel.updateSettings { it.copy(enabled = !it.enabled) }
                         },
                     ) {
-                        RYSwitch(activated = autoCleanupArticles.value) {
-                            (!autoCleanupArticles).put(context, scope)
+                        RYSwitch(activated = autoCleanupArticles) {
+                            viewModel.updateSettings { it.copy(enabled = !it.enabled) }
                         }
                     }
                     SettingItem(
@@ -162,21 +164,21 @@ fun ArticleCleanupPage(
                     SettingItem(
                         title = stringResource(R.string.cleanup_include_unread),
                         onClick = {
-                            (!autoCleanupIncludeUnread).put(context, scope)
+                            viewModel.updateSettings { it.copy(includeUnread = !it.includeUnread) }
                         },
                     ) {
-                        RYSwitch(activated = autoCleanupIncludeUnread.value) {
-                            (!autoCleanupIncludeUnread).put(context, scope)
+                        RYSwitch(activated = autoCleanupIncludeUnread) {
+                            viewModel.updateSettings { it.copy(includeUnread = !it.includeUnread) }
                         }
                     }
                     SettingItem(
                         title = stringResource(R.string.cleanup_keep_starred),
                         onClick = {
-                            (!autoCleanupKeepStarred).put(context, scope)
+                            viewModel.updateSettings { it.copy(keepStarred = !it.keepStarred) }
                         },
                     ) {
-                        RYSwitch(activated = autoCleanupKeepStarred.value) {
-                            (!autoCleanupKeepStarred).put(context, scope)
+                        RYSwitch(activated = autoCleanupKeepStarred) {
+                            viewModel.updateSettings { it.copy(keepStarred = !it.keepStarred) }
                         }
                     }
                     Tips(text = stringResource(R.string.cleanup_auto_tips))
@@ -192,8 +194,8 @@ fun ArticleCleanupPage(
                         desc = stringResource(R.string.cleanup_now_desc),
                         onClick = {
                             manualRetention = autoCleanupRetention
-                            manualIncludeUnread = autoCleanupIncludeUnread.value
-                            manualKeepStarred = autoCleanupKeepStarred.value
+                            manualIncludeUnread = autoCleanupIncludeUnread
+                            manualKeepStarred = autoCleanupKeepStarred
                             viewModel.showCleanupDialog()
                         },
                     ) {}
@@ -219,7 +221,7 @@ fun ArticleCleanupPage(
                     text = it.toDesc(context),
                     selected = it == autoCleanupRetention,
                 ) {
-                    it.put(context, scope)
+                    viewModel.updateSettings { current -> current.copy(retention = it) }
                 }
             },
     ) {
@@ -304,7 +306,7 @@ fun ArticleCleanupPage(
                         keepStarred = manualKeepStarred,
                     ) { deleted ->
                         context.showToastLong(
-                            context.getString(R.string.cleanup_done_toast, deleted)
+                            resources.getString(R.string.cleanup_done_toast, deleted)
                         )
                     }
                 }

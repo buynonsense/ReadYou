@@ -9,6 +9,7 @@ import java.util.*
  */
 @Entity(
     tableName = "article",
+    indices = [Index(value = ["accountId", "date"]), Index(value = ["feedId", "link"])],
     foreignKeys = [ForeignKey(
         entity = Feed::class,
         parentColumns = ["id"],

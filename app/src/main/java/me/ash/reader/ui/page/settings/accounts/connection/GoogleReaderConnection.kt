@@ -28,7 +28,7 @@ fun LazyItemScope.GoogleReaderConnection(
 ) {
     val context = LocalContext.current
 
-    val securityKey by remember { derivedStateOf { GoogleReaderSecurityKey(account.securityKey) } }
+    val securityKey by remember(account.securityKey) { derivedStateOf { GoogleReaderSecurityKey(account.securityKey) } }
 
     var passwordMask by remember { mutableStateOf(securityKey.password?.mask()) }
 
@@ -41,6 +41,8 @@ fun LazyItemScope.GoogleReaderConnection(
     var passwordDialogVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(securityKey.password) { passwordMask = securityKey.password?.mask() }
+
+    ServerSecuritySettings(securityKey.serverUrl.orEmpty())
 
     SettingItem(
         title = stringResource(R.string.server_url),
@@ -83,7 +85,7 @@ fun LazyItemScope.GoogleReaderConnection(
         onValueChange = { serverUrlValue = it },
         onDismissRequest = { serverUrlDialogVisible = false },
         onConfirm = {
-            if (securityKey.serverUrl?.isNotBlank() == true) {
+            if (!serverUrlValue.isNullOrBlank()) {
                 securityKey.serverUrl = serverUrlValue
                 save(account, viewModel, securityKey)
                 serverUrlDialogVisible = false
@@ -98,7 +100,7 @@ fun LazyItemScope.GoogleReaderConnection(
         onValueChange = { usernameValue = it },
         onDismissRequest = { usernameDialogVisible = false },
         onConfirm = {
-            if (securityKey.username?.isNotEmpty() == true) {
+            if (!usernameValue.isNullOrEmpty()) {
                 securityKey.username = usernameValue
                 save(account, viewModel, securityKey)
                 usernameDialogVisible = false
@@ -114,7 +116,7 @@ fun LazyItemScope.GoogleReaderConnection(
         onValueChange = { passwordValue = it },
         onDismissRequest = { passwordDialogVisible = false },
         onConfirm = {
-            if (securityKey.password?.isNotEmpty() == true) {
+            if (!passwordValue.isNullOrEmpty()) {
                 securityKey.password = passwordValue
                 save(account, viewModel, securityKey)
                 passwordDialogVisible = false

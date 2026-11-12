@@ -20,7 +20,6 @@
 
 package me.ash.reader.infrastructure.di
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.security.KeyChain
 import dagger.Module
@@ -28,150 +27,131 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
-import me.ash.reader.BuildConfig
-import okhttp3.Cache
-import okhttp3.Interceptor
-import okhttp3.OkHttpClient
-import okhttp3.Response
-import okhttp3.internal.platform.Platform
 import java.io.File
 import java.net.Socket
-import java.security.KeyManagementException
-import java.security.NoSuchAlgorithmException
+import java.security.KeyStore
 import java.security.Principal
 import java.security.PrivateKey
+import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509KeyManager
 import javax.net.ssl.X509TrustManager
+import me.ash.reader.BuildConfig
+import me.ash.reader.infrastructure.net.CleartextServerInterceptor
+import me.ash.reader.infrastructure.net.ServerSecurityStore
+import okhttp3.Cache
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import okhttp3.Response
 
-/**
- * Provides singleton [OkHttpClient] for the application.
- */
 @Module
 @InstallIn(SingletonComponent::class)
 object OkHttpClientModule {
-
     @Provides
     @Singleton
-    fun provideOkHttpClient(
-        @ApplicationContext context: Context,
-    ): OkHttpClient = cachingHttpClient(
-        context = context,
-        cacheDirectory = context.cacheDir.resolve("http")
-    ).newBuilder()
-        .addNetworkInterceptor(UserAgentInterceptor)
-        .build()
+    fun provideOkHttpClient(@ApplicationContext context: Context): OkHttpClient =
+        cachingHttpClient(context, cacheDirectory = context.cacheDir.resolve("http"))
+            .newBuilder().addNetworkInterceptor(UserAgentInterceptor).build()
 }
 
 fun cachingHttpClient(
     context: Context,
     cacheDirectory: File? = null,
     cacheSize: Long = 10L * 1024L * 1024L,
-    trustAllCerts: Boolean = true,
     connectTimeoutSecs: Long = 30L,
     readTimeoutSecs: Long = 30L,
     clientCertificateAlias: String? = null,
 ): OkHttpClient {
-    val builder: OkHttpClient.Builder = OkHttpClient.Builder()
+    val policy = CleartextServerInterceptor(ServerSecurityStore(context))
+    return OkHttpClient.Builder().apply {
+        if (cacheDirectory != null) cache(Cache(cacheDirectory, cacheSize))
+        connectTimeout(connectTimeoutSecs, TimeUnit.SECONDS)
+        readTimeout(readTimeoutSecs, TimeUnit.SECONDS)
+        followRedirects(true)
+        followSslRedirects(false)
+        addInterceptor(policy)
+        addNetworkInterceptor(policy)
+        if (!clientCertificateAlias.isNullOrBlank()) setupSsl(context, clientCertificateAlias)
+    }.build()
+}
 
-    if (cacheDirectory != null) {
-        builder.cache(Cache(cacheDirectory, cacheSize))
+/** Retain normal hostname validation even when the user trusts a private server certificate. */
+fun OkHttpClient.withServerTrust(context: Context, url: String, clientCertificateAlias: String? = null): OkHttpClient {
+    val store = ServerSecurityStore(context)
+    val pem = store.certificatePem(url)
+    if (pem == null && clientCertificateAlias.isNullOrBlank()) return this
+    val origin = requireNotNull(url.toHttpUrlOrNull())
+    val defaultVerifier = hostnameVerifier
+    return newBuilder().apply {
+        setupSsl(context, clientCertificateAlias, pem?.let(ServerSecurityStore::parseCertificate))
+        hostnameVerifier { hostname, session -> hostname == origin.host && defaultVerifier.verify(hostname, session) }
+        addNetworkInterceptor { chain ->
+            val target = chain.request().url
+            if (target.scheme != origin.scheme || target.host != origin.host || target.port != origin.port) {
+                throw java.io.IOException("The trusted certificate is restricted to this server's origin")
+            }
+            chain.proceed(chain.request())
+        }
+    }.build()
+}
+
+internal fun systemTrustManager(): X509TrustManager = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).run {
+    init(null as KeyStore?)
+    trustManagers.filterIsInstance<X509TrustManager>().single()
+}
+
+internal class ServerCertificateTrustManager(
+    private val system: X509TrustManager,
+    private val trusted: X509Certificate,
+) : X509TrustManager {
+    override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String) = system.checkClientTrusted(chain, authType)
+    override fun getAcceptedIssuers(): Array<X509Certificate> = system.acceptedIssuers + trusted
+    override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String) {
+        try {
+            system.checkServerTrusted(chain, authType)
+        } catch (e: CertificateException) {
+            val leaf = chain.firstOrNull() ?: throw e
+            leaf.checkValidity()
+            if (!java.security.MessageDigest.isEqual(leaf.encoded, trusted.encoded)) throw e
+        }
     }
-
-    builder
-        .connectTimeout(connectTimeoutSecs, TimeUnit.SECONDS)
-        .readTimeout(readTimeoutSecs, TimeUnit.SECONDS)
-        .followRedirects(true)
-
-    if (!clientCertificateAlias.isNullOrBlank() || trustAllCerts) {
-        builder.setupSsl(context, clientCertificateAlias, trustAllCerts)
-    }
-
-    return builder.build()
 }
 
 fun OkHttpClient.Builder.setupSsl(
     context: Context,
     clientCertificateAlias: String?,
-    trustAllCerts: Boolean
+    trustedCertificate: X509Certificate? = null,
 ) {
-    try {
-        val clientKeyManager = clientCertificateAlias?.let { clientAlias ->
-            object : X509KeyManager {
-                override fun getClientAliases(keyType: String?, issuers: Array<Principal>?) =
-                    throw UnsupportedOperationException("getClientAliases")
-
-                override fun chooseClientAlias(
-                    keyType: Array<String>?,
-                    issuers: Array<Principal>?,
-                    socket: Socket?
-                ) = clientCertificateAlias
-
-                override fun getServerAliases(keyType: String?, issuers: Array<Principal>?) =
-                    throw UnsupportedOperationException("getServerAliases")
-
-                override fun chooseServerAlias(
-                    keyType: String?,
-                    issuers: Array<Principal>?,
-                    socket: Socket?
-                ) = throw UnsupportedOperationException("chooseServerAlias")
-
-                override fun getCertificateChain(alias: String?): Array<X509Certificate>? {
-                    return if (alias == clientAlias) KeyChain.getCertificateChain(context, clientAlias) else null
-                }
-
-                override fun getPrivateKey(alias: String?): PrivateKey? {
-                    return if (alias == clientAlias) KeyChain.getPrivateKey(context, clientAlias) else null
-                }
-            }
+    val keyManager = clientCertificateAlias?.let { alias ->
+        object : X509KeyManager {
+            override fun getClientAliases(keyType: String?, issuers: Array<Principal>?) = arrayOf(alias)
+            override fun chooseClientAlias(keyType: Array<String>?, issuers: Array<Principal>?, socket: Socket?) = alias
+            override fun getServerAliases(keyType: String?, issuers: Array<Principal>?) = null
+            override fun chooseServerAlias(keyType: String?, issuers: Array<Principal>?, socket: Socket?) = null
+            override fun getCertificateChain(requested: String?): Array<X509Certificate>? =
+                if (requested == alias) KeyChain.getCertificateChain(context, alias) else null
+            override fun getPrivateKey(requested: String?): PrivateKey? =
+                if (requested == alias) KeyChain.getPrivateKey(context, alias) else null
         }
-
-        val trustManager = if (trustAllCerts) {
-            hostnameVerifier { _, _ -> true }
-
-            @SuppressLint("CustomX509TrustManager")
-            object : X509TrustManager {
-                override fun checkClientTrusted(
-                    chain: Array<out X509Certificate>?,
-                    authType: String?
-                ) = Unit
-
-                override fun checkServerTrusted(
-                    chain: Array<out X509Certificate>?,
-                    authType: String?
-                ) = Unit
-
-                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-            }
-        } else {
-            Platform.get().platformTrustManager()
-        }
-
-        val sslContext = SSLContext.getInstance("TLS")
-        sslContext.init(arrayOf(clientKeyManager), arrayOf(trustManager), null)
-        val sslSocketFactory = sslContext.socketFactory
-
-        sslSocketFactory(sslSocketFactory, trustManager)
-    } catch (e: NoSuchAlgorithmException) {
-        // ignore
-    } catch (e: KeyManagementException) {
-        // ignore
     }
+    val trustManager = systemTrustManager().let { system ->
+        trustedCertificate?.let { ServerCertificateTrustManager(system, it) } ?: system
+    }
+    val sslContext = SSLContext.getInstance("TLS").apply {
+        init(keyManager?.let { arrayOf(it) }, arrayOf(trustManager), null)
+    }
+    sslSocketFactory(sslContext.socketFactory, trustManager)
 }
 
 object UserAgentInterceptor : Interceptor {
-
-    override fun intercept(chain: Interceptor.Chain): Response {
-        return chain.proceed(
-            chain.request()
-                .newBuilder()
-                .header("User-Agent", USER_AGENT_STRING)
-                .build()
-        )
-    }
+    override fun intercept(chain: Interceptor.Chain): Response = chain.proceed(
+        chain.request().newBuilder().header("User-Agent", USER_AGENT_STRING).build()
+    )
 }
 
 const val USER_AGENT_STRING = BuildConfig.USER_AGENT_STRING

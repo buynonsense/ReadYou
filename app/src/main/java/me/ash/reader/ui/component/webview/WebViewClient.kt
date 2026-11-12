@@ -10,9 +10,10 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import me.ash.reader.ui.ext.isUrl
-import java.io.DataInputStream
-import java.net.HttpURLConnection
-import java.net.URI
+import java.io.FilterInputStream
+import me.ash.reader.infrastructure.di.cachingHttpClient
+import me.ash.reader.infrastructure.di.withServerTrust
+import okhttp3.Request
 
 const val INJECTION_TOKEN = "/android_asset_font/"
 
@@ -21,6 +22,7 @@ class WebViewClient(
     private val refererDomain: String?,
     private val onOpenLink: (url: String) -> Unit,
 ) : WebViewClient() {
+    private val client by lazy { cachingHttpClient(context) }
 
     override fun shouldInterceptRequest(
         view: WebView?,
@@ -43,20 +45,36 @@ class WebViewClient(
             }
         } else if (url != null && url.isUrl()) {
             try {
-                var connection = URI.create(url).toURL().openConnection() as HttpURLConnection
-                if (connection.responseCode == 403) {
-                    connection.disconnect()
-                    connection = URI.create(url).toURL().openConnection() as HttpURLConnection
-                    connection.setRequestProperty("Referer", refererDomain)
-                    val inputStream = DataInputStream(connection.inputStream)
-                    return WebResourceResponse(connection.contentType, "UTF-8", inputStream)
+                if (request.method != "GET") return blockedResponse()
+                val serverClient = client.withServerTrust(context, url)
+                val builder = Request.Builder().url(url)
+                var response = serverClient.newCall(builder.build()).execute()
+                if (response.code == 403 && refererDomain != null) {
+                    response.close()
+                    response = serverClient.newCall(builder.header("Referer", refererDomain).build()).execute()
                 }
+                // Redirects have already been checked by the same policy as RSS/API traffic.
+                val body = response.body ?: run { response.close(); return blockedResponse() }
+                val type = body.contentType()
+                val stream = object : FilterInputStream(body.byteStream()) {
+                    override fun close() { try { super.close() } finally { response.close() } }
+                }
+                return WebResourceResponse(
+                    type?.let { "${it.type}/${it.subtype}" } ?: "application/octet-stream",
+                    type?.charset()?.name() ?: "UTF-8", response.code,
+                    response.message.ifEmpty { "Response" }, response.headers.toMap(), stream,
+                )
             } catch (e: Exception) {
-                Log.e("RLog", "shouldInterceptRequest url: $e")
+                Log.w("RLog", "WebView resource request failed: ${e.javaClass.simpleName}")
+                return blockedResponse()
             }
         }
         return super.shouldInterceptRequest(view, request)
     }
+
+    private fun blockedResponse() = WebResourceResponse(
+        "text/plain", "UTF-8", 403, "Resource blocked", emptyMap(), byteArrayOf().inputStream(),
+    )
 
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)

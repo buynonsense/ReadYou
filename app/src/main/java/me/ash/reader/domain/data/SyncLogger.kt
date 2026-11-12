@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.ash.reader.infrastructure.di.ApplicationScope
+import me.ash.reader.infrastructure.preference.AccountSyncStatusStore
 
 /**
  * Manages logging throwables to a directory, ensuring the number of log files does not exceed a
@@ -22,6 +23,7 @@ class SyncLogger
 constructor(
     @ApplicationContext private val context: Context,
     @ApplicationScope private val coroutineScope: CoroutineScope,
+    private val statusStore: AccountSyncStatusStore,
 ) {
 
     private val cacheDir = context.cacheDir
@@ -34,7 +36,8 @@ constructor(
      *
      * @param throwable The exception to log.
      */
-    suspend fun log(throwable: Throwable) {
+    suspend fun log(throwable: Throwable, accountId: Int? = null) {
+        accountId?.let { statusStore.failed(it, throwable.message) }
         withContext(Dispatchers.IO) {
             try {
                 if (!logDir.exists()) {

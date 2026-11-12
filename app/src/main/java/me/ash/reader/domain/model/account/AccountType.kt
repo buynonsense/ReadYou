@@ -13,13 +13,13 @@ import me.ash.reader.R
 /**
  * Each account will specify its local or third-party API type.
  */
-class AccountType(val id: Int) {
+data class AccountType(val id: Int) {
 
     /**
      * Make sure the constructed object is valid.
      */
     init {
-        if (id < 1 || id > 6) {
+        if (id < 1 || id > 8) {
             throw IllegalArgumentException("Account type id is not valid.")
         }
     }
@@ -32,6 +32,8 @@ class AccountType(val id: Int) {
             4 -> context.getString(R.string.fresh_rss)
             5 -> context.getString(R.string.feedly)
             6 -> context.getString(R.string.inoreader)
+            7 -> "Miniflux"
+            8 -> "Tiny Tiny RSS"
             else -> context.getString(R.string.unknown)
         }
 
@@ -59,6 +61,8 @@ class AccountType(val id: Int) {
         val FreshRSS = AccountType(4)
         val Feedly = AccountType(5)
         val Inoreader = AccountType(6)
+        val Miniflux = AccountType(7)
+        val TinyTinyRss = AccountType(8)
     }
 }
 

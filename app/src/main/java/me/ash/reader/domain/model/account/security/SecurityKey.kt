@@ -5,17 +5,17 @@ import com.google.gson.Gson
 abstract class SecurityKey {
 
     fun <T> decode(value: String?, classOfT: Class<T>): T =
-        Gson().fromJson(DESUtils.decrypt(value?.ifEmpty { DESUtils.empty } ?: DESUtils.empty), classOfT)
+        Gson().fromJson(CredentialCipher.decrypt(value?.ifEmpty { DESUtils.empty } ?: DESUtils.empty), classOfT)
 
     override fun toString(): String {
-        return DESUtils.encrypt(Gson().toJson(this))
+        return CredentialCipher.encrypt(Gson().toJson(this))
     }
 
     override fun equals(other: Any?): Boolean {
-        return this.toString() == other.toString()
+        return other != null && javaClass == other.javaClass && Gson().toJson(this) == Gson().toJson(other)
     }
 
     override fun hashCode(): Int {
-        return javaClass.hashCode()
+        return 31 * javaClass.hashCode() + Gson().toJson(this).hashCode()
     }
 }

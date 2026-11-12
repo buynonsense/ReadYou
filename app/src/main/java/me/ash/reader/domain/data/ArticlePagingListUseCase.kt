@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import me.ash.reader.domain.model.article.ArticleFlowItem
 import me.ash.reader.domain.model.article.mapPagingFlowItem
@@ -71,10 +72,10 @@ constructor(
     init {
         applicationScope.launch(ioDispatcher) {
             filterStateUseCase.filterStateFlow
-                .combine(accountService.currentAccountIdFlow) { filterState, accountId ->
-                    filterState
+                .combine(accountService.currentAccountFlow.filterNotNull()) { filterState, account ->
+                    filterState to account
                 }
-                .collectLatest { filterState ->
+                .collectLatest { (filterState, account) ->
                     coroutineScope {
                         val searchContent = filterState.searchContent
 
@@ -85,8 +86,9 @@ constructor(
                                     ) {
                                         if (!searchContent.isNullOrBlank()) {
                                             rssService
-                                                .get()
+                                                .get(account.type.id)
                                                 .searchArticles(
+                                                    accountId = requireNotNull(account.id),
                                                     content = searchContent.trim(),
                                                     groupId = filterState.group?.id,
                                                     feedId = filterState.feed?.id,
@@ -98,8 +100,9 @@ constructor(
                                                 )
                                         } else {
                                             rssService
-                                                .get()
+                                                .get(account.type.id)
                                                 .pullArticles(
+                                                    accountId = requireNotNull(account.id),
                                                     groupId = filterState.group?.id,
                                                     feedId = filterState.feed?.id,
                                                     isStarred = filterState.filter.isStarred(),

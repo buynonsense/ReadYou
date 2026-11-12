@@ -53,7 +53,7 @@
 - [x] 原始文章全文解析
 - [x] 多帳戶支援
 - [x] 朗讀文章
-- [ ] Android 桌面小工具
+- [x] Android 桌面小工具
 - [ ] ...
 
 ## 第三方服務整合
@@ -63,12 +63,21 @@
 - [x] Fever
 - [x] Google Reader
 - [x] FreshRSS
-- [ ] Miniflux
-- [ ] Tiny Tiny RSS
-- [ ] Inoreader
-- [ ] Feedly
+- [x] Miniflux
+- [x] Tiny Tiny RSS
+- [x] Inoreader
+- [x] Feedly
 - [ ] Feedbin
 - [ ] ...
+
+### 同步與復原設定
+
+- Feedly、Inoreader 使用具有讀寫權限的 API token，Inoreader 亦可填寫 AppId / AppKey；Miniflux 支援 token 或帳號密碼；Tiny Tiny RSS 需要伺服器位址、帳號密碼並啟用 API。憑證到期可在帳號設定重新連線。這四類服務的訂閱管理在各自網頁端完成。
+- 已讀與收藏操作儲存在本機持久佇列，離線後會重試。帳號設定顯示同步進度、最後成功時間及錯誤。完整更新成功後移除已取消的訂閱，並保留收藏和稍後閱讀文章。
+- 本機 RSS 帳號可透過相同的 WebDAV 伺服器、目錄及遠端帳號 ID 配對，遇到衝突時選擇版本。復原支援合併或完全取代；保留 20 個遠端歷史版本及三份本機復原副本，可選擇包含離線全文。伺服器帳號可上傳備份，請在本機 RSS 帳號復原。
+- 搜尋涵蓋標題、摘要、RSS 內文與離線全文；Widget 依資料所屬帳號開啟。密碼由 Android Keystore 加密且不會包含在備份中。HTTP 須明確啟用，私人憑證須匯入並保留主機名稱驗證。
+
+新服務整合仍為實驗功能：自動測試涵蓋協定、認證失敗、分頁與狀態寫回，仍待真實帳號驗證。詳見[驗收紀錄](docs/improvement-plan.md)。API 存取亦取決於服務方案與開發者權限。
 
 ## 下載
 

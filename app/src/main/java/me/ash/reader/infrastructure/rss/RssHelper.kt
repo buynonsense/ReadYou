@@ -28,6 +28,7 @@ import me.ash.reader.ui.ext.extractDomain
 import me.ash.reader.ui.ext.isFuture
 import me.ash.reader.ui.ext.spacerDollar
 import okhttp3.OkHttpClient
+import me.ash.reader.infrastructure.di.withServerTrust
 import okhttp3.Request
 import okhttp3.executeAsync
 import okhttp3.internal.commonIsSuccessful
@@ -296,5 +297,5 @@ constructor(
     }
 
     private suspend fun response(client: OkHttpClient, url: String): okhttp3.Response =
-        client.newCall(Request.Builder().url(url).build()).executeAsync()
+        client.withServerTrust(context, url).newCall(Request.Builder().url(url).build()).executeAsync()
 }

@@ -18,17 +18,20 @@ constructor(
     private val localRssService: LocalRssService,
     private val feverRssService: FeverRssService,
     private val googleReaderRssService: GoogleReaderRssService,
+    private val remoteRssService: RemoteRssService,
 ) {
 
     private val currentServiceFlow =
         accountService.currentAccountFlow
             .mapNotNull { it }
-            .map { it.type.id }
+            .map { requireNotNull(it.id) to it.type.id }
             .distinctUntilChanged()
-            .map { get(it) }
-            .stateIn(coroutineScope, SharingStarted.Eagerly, localRssService)
+            .map { (_, type) -> get(type) }
 
     fun get() = get(accountService.getCurrentAccount().type.id)
+
+    suspend fun forAccount(accountId: Int): AbstractRssRepository =
+        get(requireNotNull(accountService.getAccountById(accountId)) { "Account was deleted" }.type.id)
 
     fun flow() = currentServiceFlow
 
@@ -38,8 +41,7 @@ constructor(
             AccountType.Fever.id -> feverRssService
             AccountType.GoogleReader.id -> googleReaderRssService
             AccountType.FreshRSS.id -> googleReaderRssService
-            AccountType.Inoreader.id -> localRssService
-            AccountType.Feedly.id -> localRssService
+            AccountType.Inoreader.id, AccountType.Feedly.id, AccountType.Miniflux.id, AccountType.TinyTinyRss.id -> remoteRssService
             else -> localRssService
         }
 }

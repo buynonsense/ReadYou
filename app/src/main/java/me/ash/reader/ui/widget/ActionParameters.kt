@@ -8,6 +8,7 @@ internal fun makeActionParameters(item: Article?, dataSource: DataSource) =
     mutableActionParametersOf().apply {
         if (item != null) {
             set(ActionParameters.Key<String>(ExtraName.ARTICLE_ID), item.id)
+            item.accountId?.let { set(ActionParameters.Key<Int>(ExtraName.ACCOUNT_ID), it) }
         }
         when (dataSource) {
             is DataSource.Account -> set(ActionParameters.Key<Int>(ExtraName.ACCOUNT_ID), dataSource.accountId)

@@ -72,20 +72,8 @@ class ArticleListWidget() : GlanceAppWidget() {
 
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override val stateDefinition: GlanceStateDefinition<*>?
-        get() =
-            object : GlanceStateDefinition<Preferences> {
-                override fun getLocation(context: Context, fileKey: String): File {
-                    TODO("Not yet implemented")
-                }
-
-                override suspend fun getDataStore(
-                    context: Context,
-                    fileKey: String,
-                ): DataStore<Preferences> {
-                    return context.widgetDataStore
-                }
-            }
+    // Configuration lives in WidgetRepository; Glance does not need another state file.
+    override val stateDefinition: GlanceStateDefinition<*>? = null
 
     override suspend fun providePreview(context: Context, widgetCategory: Int) {
         val repository = WidgetRepository.get(context)

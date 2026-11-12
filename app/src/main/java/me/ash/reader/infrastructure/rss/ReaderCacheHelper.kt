@@ -4,118 +4,104 @@ import android.content.Context
 import androidx.annotation.CheckResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.io.FileNotFoundException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import me.ash.reader.domain.model.article.Article
-import me.ash.reader.domain.service.AccountService
+import me.ash.reader.domain.repository.ArticleSearchDao
+import me.ash.reader.infrastructure.coroutine.runCatchingCancellable
 import me.ash.reader.infrastructure.di.IODispatcher
 
-class ReaderCacheHelper
-@Inject
-constructor(
-    @ApplicationContext private val context: Context,
+class ReaderCacheHelper @Inject constructor(
+    @ApplicationContext context: Context,
     @IODispatcher private val ioDispatcher: CoroutineDispatcher,
     private val rssHelper: RssHelper,
-    private val accountService: AccountService,
+    private val articleSearchDao: ArticleSearchDao,
 ) {
     private val cacheDir = context.cacheDir.resolve("readability")
-    private val md = MessageDigest.getInstance("SHA-256")
 
-    private val currentCacheDir: File
-        get() = cacheDir.resolve(accountService.getCurrentAccountId().toString())
+    private fun accountDir(accountId: Int): File {
+        require(accountId > 0) { "Invalid cache account" }
+        return cacheDir.resolve(accountId.toString())
+    }
 
     @OptIn(ExperimentalStdlibApi::class)
-    private fun getFileNameFor(articleId: String): String {
-        val bytes = articleId.toByteArray()
-        val digest = md.digest(bytes)
-        return digest.toHexString() + ".html"
+    private fun cacheFile(accountId: Int, articleId: String): File =
+        accountDir(accountId).resolve(
+            MessageDigest.getInstance("SHA-256").digest(articleId.toByteArray()).toHexString() + ".html"
+        )
+
+    suspend fun peekFullContent(accountId: Int, articleId: String): String? = withContext(ioDispatcher) {
+        val file = cacheFile(accountId, articleId)
+        if (file.exists()) file.readText().takeIf { it.isNotBlank() } else null
     }
 
-    private suspend fun writeContentToCache(content: String, articleId: String): Boolean {
-        return withContext(ioDispatcher) {
-            runCatching {
-                    currentCacheDir.run {
-                        mkdirs()
-                        resolve(getFileNameFor(articleId)).run {
-                            createNewFile()
-                            writeText(content)
-                        }
-                    }
+    suspend fun writeFullContent(accountId: Int, articleId: String, content: String): Result<Unit> =
+        withContext(ioDispatcher) {
+            runCatchingCancellable {
+                require(content.isNotBlank()) { "Empty article content" }
+                val target = cacheFile(accountId, articleId)
+                check(target.parentFile!!.isDirectory || target.parentFile!!.mkdirs())
+                val temporary = File.createTempFile("article-", ".tmp", target.parentFile)
+                try {
+                    temporary.writeText(content)
+                    Files.move(
+                        temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                } finally {
+                    temporary.delete()
                 }
-                .fold(onSuccess = { true }, onFailure = { false })
+                articleSearchDao.updateCachedBody(accountId, articleId, org.jsoup.Jsoup.parse(content).text())
+                Unit
+            }
         }
-    }
 
     @CheckResult
-    suspend fun readFullContent(articleId: String): Result<String> {
-        return withContext(ioDispatcher) {
-            runCatching {
-                val file = currentCacheDir.resolve(getFileNameFor(articleId))
-                if (!file.exists()) return@withContext Result.failure(FileNotFoundException())
-                file.readText()
+    suspend fun readFullContent(articleId: String, accountId: Int): Result<String> =
+        withContext(ioDispatcher) {
+            runCatchingCancellable {
+                cacheFile(accountId, articleId).readText().also {
+                    check(it.isNotBlank()) { "Empty article cache" }
+                    articleSearchDao.updateCachedBody(accountId, articleId, org.jsoup.Jsoup.parse(it).text())
+                }
             }
         }
-    }
 
-    private suspend fun fetchFullContentInternal(article: Article): Result<String> {
-        return withContext(ioDispatcher) {
-            runCatching {
-                val fullContent = rssHelper.parseFullContent(article.link, article.title)
-                if (fullContent.isNotBlank()) {
-                    writeContentToCache(fullContent, article.id)
-                    fullContent
-                } else return@withContext Result.failure(Exception())
+    private suspend fun fetchFullContentInternal(article: Article): Result<String> =
+        withContext(ioDispatcher) {
+            runCatchingCancellable {
+                val content = rssHelper.parseFullContent(article.link, article.title)
+                writeFullContent(article.accountId, article.id, content).getOrThrow()
+                content
             }
         }
-    }
 
     @CheckResult
-    suspend fun readOrFetchFullContent(article: Article): Result<String> {
-        return withContext(ioDispatcher) {
-            runCatching {
-                val result = readFullContent(article.id)
-                if (result.isSuccess) return@withContext result
-                return@withContext fetchFullContentInternal(article)
-            }
+    suspend fun readOrFetchFullContent(article: Article): Result<String> =
+        readFullContent(article.id, article.accountId).let { cached ->
+            if (cached.isSuccess) cached else fetchFullContentInternal(article)
         }
-    }
 
-    suspend fun checkOrFetchFullContent(article: Article): Boolean {
-        return withContext(ioDispatcher) {
-            val file = currentCacheDir.resolve(getFileNameFor(article.id))
-            try {
-                if (!file.exists()) {
-                    return@withContext fetchFullContentInternal(article)
-                        .fold(onFailure = { false }, onSuccess = { true })
-                } else {
-                    return@withContext true
-                }
-            } catch (_: SecurityException) {
-                return@withContext false
-            }
-        }
-    }
+    suspend fun checkOrFetchFullContent(article: Article): Boolean =
+        readOrFetchFullContent(article).isSuccess
 
-    suspend fun deleteCacheFor(articleId: String): Boolean {
-        return withContext(ioDispatcher) {
-            runCatching {
-                    val file = currentCacheDir.resolve(getFileNameFor(articleId))
-                    if (!file.exists()) return@runCatching false
-                    return@runCatching file.delete()
-                }
-                .fold(onSuccess = { true }, onFailure = { false })
+    suspend fun deleteCacheFor(articleId: String, accountId: Int): Boolean =
+        withContext(ioDispatcher) {
+            runCatchingCancellable {
+                val file = cacheFile(accountId, articleId)
+                articleSearchDao.updateCachedBody(accountId, articleId, "")
+                !file.exists() || file.delete()
+            }.getOrDefault(false)
         }
-    }
 
-    suspend fun clearCache(): Boolean {
-        return withContext(ioDispatcher) {
-            runCatching {
-                    return@withContext currentCacheDir.deleteRecursively()
-                }
-                .fold(onSuccess = { true }, onFailure = { false })
-        }
+    suspend fun clearCache(accountId: Int): Boolean = withContext(ioDispatcher) {
+        runCatchingCancellable {
+            articleSearchDao.clearCachedBodies(accountId)
+            accountDir(accountId).deleteRecursively()
+        }.getOrDefault(false)
     }
 }

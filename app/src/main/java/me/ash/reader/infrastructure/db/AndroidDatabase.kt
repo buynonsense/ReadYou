@@ -8,6 +8,10 @@ import me.ash.reader.domain.model.account.*
 import me.ash.reader.domain.model.account.security.DESUtils
 import me.ash.reader.domain.model.article.ArchivedArticle
 import me.ash.reader.domain.model.article.Article
+import me.ash.reader.domain.model.article.ArticleSearch
+import me.ash.reader.domain.model.article.PendingArticleState
+import me.ash.reader.domain.repository.PendingArticleStateDao
+import me.ash.reader.domain.repository.ArticleSearchDao
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.model.group.Group
 import me.ash.reader.domain.repository.AccountDao
@@ -19,8 +23,8 @@ import me.ash.reader.ui.ext.toInt
 import java.util.*
 
 @Database(
-    entities = [Account::class, Feed::class, Article::class, Group::class, ArchivedArticle::class],
-    version = 7,
+    entities = [Account::class, Feed::class, Article::class, Group::class, ArchivedArticle::class, ArticleSearch::class, PendingArticleState::class],
+    version = 10,
     autoMigrations = [
         AutoMigration(from = 5, to = 6),
         AutoMigration(from = 5, to = 7),
@@ -43,6 +47,8 @@ abstract class AndroidDatabase : RoomDatabase() {
     abstract fun feedDao(): FeedDao
     abstract fun articleDao(): ArticleDao
     abstract fun groupDao(): GroupDao
+    abstract fun articleSearchDao(): ArticleSearchDao
+    abstract fun pendingArticleStateDao(): PendingArticleStateDao
 
     companion object {
 
@@ -54,7 +60,7 @@ abstract class AndroidDatabase : RoomDatabase() {
                     context.applicationContext,
                     AndroidDatabase::class.java,
                     "Reader"
-                ).addMigrations(*allMigrations).build().also {
+                ).addMigrations(*allMigrations).addCallback(ARTICLE_SEARCH_CALLBACK).build().also {
                     instance = it
                 }
             }
@@ -80,7 +86,58 @@ val allMigrations = arrayOf(
     MIGRATION_2_3,
     MIGRATION_3_4,
     MIGRATION_4_5,
+    MIGRATION_7_8,
+    MIGRATION_8_9,
+    MIGRATION_9_10,
 )
+
+object MIGRATION_9_10 : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS pending_article_state (
+            accountId INTEGER NOT NULL, articleId TEXT NOT NULL, field TEXT NOT NULL,
+            value INTEGER NOT NULL, revision TEXT NOT NULL, changedAt INTEGER NOT NULL,
+            PRIMARY KEY(accountId, articleId, field),
+            FOREIGN KEY(articleId) REFERENCES article(id) ON UPDATE NO ACTION ON DELETE CASCADE
+        )""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_pending_article_state_articleId ON pending_article_state(articleId)")
+    }
+}
+
+val ARTICLE_SEARCH_CALLBACK = object : RoomDatabase.Callback() {
+    override fun onCreate(db: SupportSQLiteDatabase) { createArticleSearchTriggers(db) }
+}
+
+private fun createArticleSearchTriggers(db: SupportSQLiteDatabase) {
+    db.execSQL("""CREATE TRIGGER IF NOT EXISTS readyou_search_insert AFTER INSERT ON article BEGIN
+        INSERT OR REPLACE INTO article_search(rowid, title, summary, body, cachedBody)
+        VALUES (NEW.rowid, NEW.title, NEW.shortDescription, NEW.rawDescription, COALESCE(NEW.fullContent, ''));
+        END""")
+    db.execSQL("""CREATE TRIGGER IF NOT EXISTS readyou_search_update AFTER UPDATE OF title, shortDescription, rawDescription, fullContent ON article BEGIN
+        UPDATE article_search SET title = NEW.title, summary = NEW.shortDescription, body = NEW.rawDescription
+        WHERE rowid = OLD.rowid;
+        END""")
+    db.execSQL("""CREATE TRIGGER IF NOT EXISTS readyou_search_delete AFTER DELETE ON article BEGIN
+        DELETE FROM article_search WHERE rowid = OLD.rowid;
+        END""")
+}
+
+object MIGRATION_8_9 : Migration(8, 9) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS article_search USING FTS4(title TEXT NOT NULL, summary TEXT NOT NULL, body TEXT NOT NULL, cachedBody TEXT NOT NULL, tokenize=unicode61)")
+        database.execSQL("INSERT INTO article_search(rowid, title, summary, body, cachedBody) SELECT rowid, title, shortDescription, rawDescription, COALESCE(fullContent, '') FROM article")
+        createArticleSearchTriggers(database)
+    }
+}
+
+object MIGRATION_7_8 : Migration(7, 8) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE archived_article ADD COLUMN archivedAt INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("DELETE FROM archived_article WHERE id NOT IN (SELECT MAX(id) FROM archived_article GROUP BY feedId, link)")
+        database.execSQL("CREATE UNIQUE INDEX index_archived_article_feedId_link ON archived_article(feedId, link)")
+        database.execSQL("CREATE INDEX index_article_accountId_date ON article(accountId, date)")
+        database.execSQL("CREATE INDEX index_article_feedId_link ON article(feedId, link)")
+    }
+}
 
 @Suppress("ClassName")
 object MIGRATION_1_2 : Migration(1, 2) {

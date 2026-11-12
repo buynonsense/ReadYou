@@ -39,7 +39,7 @@ private constructor(
     private val httpPassword: String? = null,
     private val syncLogger: SyncLogger,
     clientCertificateAlias: String? = null,
-) : ProviderAPI(context, clientCertificateAlias) {
+) : ProviderAPI(context, clientCertificateAlias, serverUrl) {
 
     sealed class Stream(val tag: String) {
         data object AllItems : Stream("user/-/state/com.google/reading-list")

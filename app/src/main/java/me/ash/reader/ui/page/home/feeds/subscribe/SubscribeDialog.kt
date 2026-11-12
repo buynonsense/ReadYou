@@ -10,6 +10,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CreateNewFolder
@@ -37,6 +38,7 @@ import me.ash.reader.ui.ext.MimeType
 import me.ash.reader.ui.ext.collectAsStateValue
 import me.ash.reader.ui.ext.roundClick
 import me.ash.reader.ui.page.home.feeds.FeedOptionView
+import me.ash.reader.ui.page.settings.accounts.connection.ServerSecuritySettings
 
 @OptIn(
     androidx.compose.ui.ExperimentalComposeUiApi::class,
@@ -120,6 +122,7 @@ fun SubscribeDialog(
                                 is SubscribeState.Idle -> state.errorMessage ?: ""
                             }
 
+                            Column {
                             ClipboardTextField(
                                 state = state.linkState,
                                 modifier = Modifier.fillMaxWidth(),
@@ -131,6 +134,8 @@ fun SubscribeDialog(
                                     subscribeViewModel.searchFeed()
                                 },
                             )
+                            ServerSecuritySettings(state.linkState.text.toString())
+                            }
                         }
 
                         is SubscribeState.Configure -> {

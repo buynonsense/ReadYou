@@ -58,7 +58,7 @@ class GroupOptionViewModel @Inject constructor(
     fun allAllowNotification(isNotification: Boolean, callback: () -> Unit = {}) {
         _groupOptionUiState.value.group?.let {
             viewModelScope.launch(ioDispatcher) {
-                rssService.get().groupAllowNotification(it, isNotification)
+                rssService.forAccount(it.accountId).groupAllowNotification(it, isNotification)
                 withContext(mainDispatcher) {
                     callback()
                 }
@@ -77,7 +77,7 @@ class GroupOptionViewModel @Inject constructor(
     fun allParseFullContent(isFullContent: Boolean, callback: () -> Unit = {}) {
         _groupOptionUiState.value.group?.let {
             viewModelScope.launch(ioDispatcher) {
-                rssService.get().groupParseFullContent(it, isFullContent)
+                rssService.forAccount(it.accountId).groupParseFullContent(it, isFullContent)
                 withContext(mainDispatcher) {
                     callback()
                 }
@@ -96,7 +96,7 @@ class GroupOptionViewModel @Inject constructor(
     fun allOpenInBrowser(isBrowser: Boolean, callback: () -> Unit = {}) {
         _groupOptionUiState.value.group?.let {
             viewModelScope.launch(ioDispatcher) {
-                rssService.get().groupOpenInBrowser(it, isBrowser)
+                rssService.forAccount(it.accountId).groupOpenInBrowser(it, isBrowser)
                 withContext(mainDispatcher) {
                     callback()
                 }
@@ -115,7 +115,7 @@ class GroupOptionViewModel @Inject constructor(
     fun delete(callback: () -> Unit = {}) {
         _groupOptionUiState.value.group?.let {
             applicationScope.launch(ioDispatcher) {
-                rssService.get().deleteGroup(it)
+                rssService.forAccount(it.accountId).deleteGroup(it)
                 withContext(mainDispatcher) {
                     callback()
                 }
@@ -142,7 +142,7 @@ class GroupOptionViewModel @Inject constructor(
     fun clear(callback: () -> Unit = {}) {
         _groupOptionUiState.value.group?.let {
             viewModelScope.launch(ioDispatcher) {
-                rssService.get().deleteArticles(group = it)
+                rssService.forAccount(it.accountId).deleteArticles(group = it)
                 withContext(mainDispatcher) {
                     callback()
                 }
@@ -154,7 +154,7 @@ class GroupOptionViewModel @Inject constructor(
         _groupOptionUiState.value.group?.let { group ->
             _groupOptionUiState.value.targetGroup?.let { targetGroup ->
                 viewModelScope.launch(ioDispatcher) {
-                    rssService.get().groupMoveToTargetGroup(group, targetGroup)
+                    rssService.forAccount(group.accountId).groupMoveToTargetGroup(group, targetGroup)
                     withContext(mainDispatcher) {
                         callback()
                     }
@@ -184,7 +184,7 @@ class GroupOptionViewModel @Inject constructor(
     fun rename() {
         _groupOptionUiState.value.group?.let {
             applicationScope.launch {
-                rssService.get().renameGroup(it.copy(name = _groupOptionUiState.value.newName))
+                rssService.forAccount(it.accountId).renameGroup(it.copy(name = _groupOptionUiState.value.newName))
                 _groupOptionUiState.update { it.copy(renameDialogVisible = false) }
             }
         }

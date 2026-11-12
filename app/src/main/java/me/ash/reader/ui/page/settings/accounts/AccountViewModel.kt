@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,10 +15,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.ash.reader.domain.model.account.Account
+import me.ash.reader.domain.model.account.security.SecurityKey
+import me.ash.reader.infrastructure.preference.AccountSyncStatusStore
 import me.ash.reader.domain.service.AccountService
 import me.ash.reader.domain.service.OpmlService
 import me.ash.reader.domain.service.RssService
-import me.ash.reader.infrastructure.di.ApplicationScope
 import me.ash.reader.infrastructure.di.DefaultDispatcher
 import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.di.MainDispatcher
@@ -29,19 +30,23 @@ class AccountViewModel @Inject constructor(
     private val accountService: AccountService,
     private val rssService: RssService,
     private val opmlService: OpmlService,
+    private val syncStatusStore: AccountSyncStatusStore,
     @IODispatcher
     private val ioDispatcher: CoroutineDispatcher,
     @DefaultDispatcher
     private val defaultDispatcher: CoroutineDispatcher,
     @MainDispatcher
     private val mainDispatcher: CoroutineDispatcher,
-    @ApplicationScope
-    private val applicationScope: CoroutineScope,
 ) : ViewModel() {
 
     private val _accountUiState = MutableStateFlow(AccountUiState())
     val accountUiState: StateFlow<AccountUiState> = _accountUiState.asStateFlow()
     val accounts = accountService.getAccounts()
+    val syncStatuses = syncStatusStore.statuses
+
+    fun retrySync(accountId: Int) {
+        viewModelScope.launch(ioDispatcher) { rssService.forAccount(accountId).doSyncOneTime(accountId) }
+    }
     var addAccountJob: Job? = null
 
     fun initData(accountId: Int) {
@@ -51,16 +56,39 @@ class AccountViewModel @Inject constructor(
     }
 
     fun update(accountId: Int, block: Account.() -> Account) {
-        applicationScope.launch(ioDispatcher) {
+        viewModelScope.launch(ioDispatcher) {
             accountService.update(accountId, block)
-            rssService.get(accountId).clearAuthorization()
+            accountService.getAccountById(accountId)?.let { account ->
+                rssService.get(account.type.id).clearAuthorization()
+            }
+        }
+    }
+
+    fun reconnect(accountId: Int, credentials: SecurityKey, callback: (Exception?) -> Unit) {
+        viewModelScope.launch(ioDispatcher) {
+            val error = try {
+                val account = requireNotNull(accountService.getAccountById(accountId)) { "Account was deleted" }
+                val encrypted = credentials.toString()
+                val provider = rssService.get(account.type.id)
+                check(provider.validCredentials(account.copy(securityKey = encrypted))) { "Unauthorized" }
+                accountService.update(accountId) { copy(securityKey = encrypted) }
+                provider.clearAuthorization()
+                provider.doSyncOneTime(accountId)
+                null
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                e
+            }
+            withContext(mainDispatcher) { callback(error) }
         }
     }
 
     fun exportAsOPML(accountId: Int, callback: (String) -> Unit = {}) {
-        viewModelScope.launch(defaultDispatcher) {
-            callback(opmlService.saveToString(accountId,
-                _accountUiState.value.exportOPMLMode == ExportOPMLMode.ATTACH_INFO))
+        viewModelScope.launch(mainDispatcher) {
+            val content = withContext(defaultDispatcher) {
+                opmlService.saveToString(accountId, _accountUiState.value.exportOPMLMode == ExportOPMLMode.ATTACH_INFO)
+            }
+            callback(content)
         }
     }
 
@@ -99,13 +127,14 @@ class AccountViewModel @Inject constructor(
     }
 
     fun addAccount(account: Account, callback: (account: Account?, exception: Exception?) -> Unit) {
+        if (_accountUiState.value.isLoading) return
         setLoading(true)
-        addAccountJob = applicationScope.launch(ioDispatcher) {
-            val addAccount = accountService.addAccount(account)
+        addAccountJob = viewModelScope.launch(ioDispatcher) {
             try {
-                val rssService = rssService.get(addAccount.type.id)
+                val rssService = rssService.get(account.type.id)
                 if (rssService.validCredentials(account)) {
-                    rssService.doSyncOneTime()
+                    val addAccount = accountService.addAccount(account)
+                    rssService.doSyncOneTime(requireNotNull(addAccount.id))
                     withContext(mainDispatcher) {
                         callback(addAccount, null)
                     }
@@ -113,13 +142,24 @@ class AccountViewModel @Inject constructor(
                     throw Exception("Unauthorized")
                 }
             } catch (e: Exception) {
-                accountService.delete(addAccount.id!!)
+                if (e is CancellationException) throw e
                 withContext(mainDispatcher) {
                     callback(null, e)
                 }
             } finally {
                 setLoading(false)
             }
+        }
+    }
+
+    fun addAccount(account: Account, credentials: SecurityKey, callback: (Account?, Exception?) -> Unit) {
+        viewModelScope.launch(ioDispatcher) {
+            val encrypted = try { credentials.toString() } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                withContext(mainDispatcher) { callback(null, e) }
+                return@launch
+            }
+            addAccount(account.copy(securityKey = encrypted), callback)
         }
     }
 
@@ -143,13 +183,7 @@ class AccountViewModel @Inject constructor(
     }
 
     private fun setLoading(isLoading: Boolean) {
-        viewModelScope.launch {
-            _accountUiState.update {
-                it.copy(
-                    isLoading = isLoading
-                )
-            }
-        }
+        _accountUiState.update { it.copy(isLoading = isLoading) }
     }
     
     fun cancelAdd() {

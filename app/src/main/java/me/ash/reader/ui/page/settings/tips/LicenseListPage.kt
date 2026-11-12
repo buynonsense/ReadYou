@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
@@ -29,7 +30,7 @@ fun LicenseListPage(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
-
+    val resources = LocalResources.current
     RYScaffold(
         containerColor = MaterialTheme.colorScheme.surface onLight MaterialTheme.colorScheme.inverseOnSurface,
         navigationIcon = {
@@ -48,7 +49,7 @@ fun LicenseListPage(
                 tint = MaterialTheme.colorScheme.onSurface
             ) {
                 context.openURL(
-                    url = context.getString(R.string.github_link) + "/blob/main/LICENSE",
+                    url = resources.getString(R.string.github_link) + "/blob/main/LICENSE",
                     openLink = OpenLinkPreference.AutoPreferCustomTabs,
                 )
             }

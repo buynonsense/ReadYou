@@ -590,6 +590,12 @@ val ignorePreferencesOnExportAndImport =
         DataStoreKey.currentAccountId,
         DataStoreKey.currentAccountType,
         DataStoreKey.isFirstLaunch,
+        DataStoreKey.webdavServerUrl,
+        DataStoreKey.webdavUsername,
+        DataStoreKey.webdavPassword,
+        DataStoreKey.webdavAutoSync,
+        DataStoreKey.webdavRemotePath,
+        DataStoreKey.webdavLastSyncTime,
     )
 
 suspend fun Context.fromDataStoreToJSONString(): String {
@@ -598,7 +604,7 @@ suspend fun Context.fromDataStoreToJSONString(): String {
         preferences
             .asMap()
             .mapKeys { it.key.name }
-            .filterKeys { it !in ignorePreferencesOnExportAndImport }
+            .filterKeys { it !in ignorePreferencesOnExportAndImport && !it.startsWith("webdav.") }
     return Gson().toJson(map)
 }
 
@@ -608,7 +614,7 @@ suspend fun String.fromJSONStringToDataStore(context: Context) {
     val deserializedMap: Map<String, Any> = gson.fromJson(this, type)
     context.dataStore.edit { preferences ->
         deserializedMap
-            .filterKeys { it !in ignorePreferencesOnExportAndImport }
+            .filterKeys { it !in ignorePreferencesOnExportAndImport && !it.startsWith("webdav.") }
             .forEach { (keyString, value) ->
                 val preferencesKey = PreferencesKey.keys[keyString]
                 when (preferencesKey) {

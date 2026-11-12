@@ -10,8 +10,10 @@ import androidx.room.Query
 import androidx.room.RewriteQueriesToDropUnusedColumns
 import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 import me.ash.reader.domain.model.article.Article
+import me.ash.reader.domain.model.article.ArchivedArticle
 import me.ash.reader.domain.model.article.ArticleLinkMeta
 import me.ash.reader.domain.model.article.ArticleMeta
 import me.ash.reader.domain.model.article.ArticleSnapshot
@@ -23,6 +25,25 @@ import java.util.Date
 
 @Dao
 interface ArticleDao {
+    @Query("SELECT COUNT(*) FROM article WHERE accountId = :accountId AND feedId = :feedId AND (isStarred = 1 OR isReadLater = 1)")
+    suspend fun countProtectedByFeed(accountId: Int, feedId: String): Int
+
+    @Query("SELECT COUNT(*) FROM article a JOIN feed f ON f.id = a.feedId WHERE a.accountId = :accountId AND f.groupId = :groupId AND (a.isStarred = 1 OR a.isReadLater = 1)")
+    suspend fun countProtectedByGroup(accountId: Int, groupId: String): Int
+
+    @Query("SELECT id, feedId, link, isUnread, isStarred, isReadLater FROM article WHERE accountId = :accountId")
+    suspend fun queryStateMetadata(accountId: Int): List<ArticleSyncMeta>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM article WHERE id = :articleId AND accountId = :accountId)")
+    suspend fun contains(accountId: Int, articleId: String): Boolean
+
+    @Query("""SELECT id FROM article WHERE accountId = :accountId
+        AND (:groupId IS NULL OR feedId IN (SELECT id FROM feed WHERE groupId = :groupId AND accountId = :accountId))
+        AND (:feedId IS NULL OR feedId = :feedId)
+        AND (:articleId IS NULL OR id = :articleId)
+        AND date < :before AND isUnread != :isUnread ORDER BY id
+    """)
+    suspend fun stateTargets(accountId: Int, groupId: String?, feedId: String?, articleId: String?, before: Date, isUnread: Boolean): List<String>
 
     @Query(
         """
@@ -91,207 +112,36 @@ interface ArticleDao {
     @Query(
         """
         SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND feedId IN (
-            SELECT id FROM feed WHERE groupId = :groupId
-        )
-        AND isUnread = :isUnread
+        WHERE accountId = :accountId
+        AND (:feedId IS NULL OR feedId = :feedId)
+        AND (:groupId IS NULL OR feedId IN (SELECT id FROM feed WHERE groupId = :groupId AND accountId = :accountId))
+        AND (:isUnread = 0 OR isUnread = 1)
+        AND (:isStarred = 0 OR isStarred = 1)
         AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
+            rowid IN (SELECT rowid FROM article_search WHERE article_search MATCH :query)
+            OR (:useSubstring = 1 AND rowid IN (
+                SELECT rowid FROM article_search
+                WHERE instr(title, :literal) > 0 OR instr(summary, :literal) > 0
+                    OR instr(body, :literal) > 0 OR instr(cachedBody, :literal) > 0
+            ))
         )
         ORDER BY
             CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
+            CASE WHEN :sortAscending = 0 THEN date END DESC,
+            id ASC
         """
     )
-    fun searchArticleByGroupIdWhenIsUnread(
+    fun searchArticles(
         accountId: Int,
-        text: String,
-        groupId: String,
-        isUnread: Boolean,
-        sortAscending: Boolean = false
+        query: String,
+        literal: String,
+        useSubstring: Boolean,
+        feedId: String? = null,
+        groupId: String? = null,
+        isUnread: Boolean = false,
+        isStarred: Boolean = false,
+        sortAscending: Boolean = false,
     ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND feedId IN (
-            SELECT id FROM feed WHERE groupId = :groupId
-        )
-        AND isStarred = :isStarred
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleByGroupIdWhenIsStarred(
-        accountId: Int,
-        text: String,
-        groupId: String,
-        isStarred: Boolean,
-        sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND feedId IN (
-            SELECT id FROM feed WHERE groupId = :groupId
-        )
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleByGroupIdWhenAll(
-        accountId: Int, text: String, groupId: String, sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND feedId = :feedId
-        AND isUnread = :isUnread
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleByFeedIdWhenIsUnread(
-        accountId: Int,
-        text: String,
-        feedId: String,
-        isUnread: Boolean,
-        sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND feedId = :feedId
-        AND isStarred = :isStarred
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleByFeedIdWhenIsStarred(
-        accountId: Int,
-        text: String,
-        feedId: String,
-        isStarred: Boolean,
-        sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND feedId = :feedId 
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleByFeedIdWhenAll(
-        accountId: Int, text: String, feedId: String, sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND isUnread = :isUnread
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleWhenIsUnread(
-        accountId: Int, text: String, isUnread: Boolean, sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND isStarred = :isStarred
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleWhenIsStarred(
-        accountId: Int, text: String, isStarred: Boolean, sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
-    @Transaction
-    @Query(
-        """
-        SELECT * FROM article
-        WHERE accountId = :accountId 
-        AND (
-            title LIKE '%' || :text || '%'
-            OR shortDescription LIKE '%' || :text || '%'
-            OR fullContent LIKE '%' || :text || '%'
-        )
-        ORDER BY
-            CASE WHEN :sortAscending = 1 THEN date END ASC,
-            CASE WHEN :sortAscending = 0 THEN date END DESC
-        """
-    )
-    fun searchArticleWhenAll(
-        accountId: Int, text: String, sortAscending: Boolean = false
-    ): PagingSource<Int, ArticleWithFeed>
-
 
     @Query(
         """
@@ -440,6 +290,7 @@ interface ArticleDao {
         AND date < :before
         AND (isUnread = 0 OR :includeUnread = 1)
         AND (isStarred = 0 OR :keepStarred = 0)
+        AND isReadLater = 0
         """
     )
     suspend fun countArticlesBefore(
@@ -456,6 +307,7 @@ interface ArticleDao {
         AND date < :before
         AND (isUnread = 0 OR :includeUnread = 1)
         AND (isStarred = 0 OR :keepStarred = 0)
+        AND isReadLater = 0
         """
     )
     suspend fun queryArticleIdentitiesBefore(
@@ -472,6 +324,7 @@ interface ArticleDao {
         AND date < :before
         AND (isUnread = 0 OR :includeUnread = 1)
         AND (isStarred = 0 OR :keepStarred = 0)
+        AND isReadLater = 0
         """
     )
     suspend fun deleteArticlesBefore(
@@ -480,6 +333,49 @@ interface ArticleDao {
         includeUnread: Boolean = false,
         keepStarred: Boolean = true,
     ): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertArchivedIdentities(identities: List<ArchivedArticle>)
+
+    @Query("DELETE FROM article WHERE accountId = :accountId AND id IN (:ids)")
+    suspend fun deleteByIds(accountId: Int, ids: List<String>): Int
+
+    @Query("""
+        SELECT id, feedId, link FROM article
+        WHERE accountId = :accountId AND updateAt < :before
+        AND isUnread = 0 AND isStarred = 0 AND isReadLater = 0
+    """)
+    suspend fun queryExpiredIdentities(accountId: Int, before: Date): List<ArticleLinkMeta>
+
+    @Transaction
+    suspend fun archiveExpiredArticles(accountId: Int, before: Date): List<ArticleLinkMeta> =
+        archiveAndDelete(accountId, queryExpiredIdentities(accountId, before))
+
+    @Transaction
+    suspend fun cleanupBefore(
+        accountId: Int,
+        before: Date,
+        includeUnread: Boolean,
+        keepStarred: Boolean,
+    ): List<ArticleLinkMeta> = archiveAndDelete(
+        accountId, queryArticleIdentitiesBefore(accountId, before, includeUnread, keepStarred),
+    )
+
+    @Transaction
+    suspend fun archiveAndDelete(
+        accountId: Int, identities: List<ArticleLinkMeta>,
+    ): List<ArticleLinkMeta> {
+        val archivedAt = System.currentTimeMillis()
+        identities.chunked(500).forEach { batch ->
+            insertArchivedIdentities(batch.map {
+                ArchivedArticle(feedId = it.feedId, link = it.link, archivedAt = archivedAt)
+            })
+            check(deleteByIds(accountId, batch.map { it.id }) == batch.size) {
+                "Article cleanup changed during the transaction"
+            }
+        }
+        return identities
+    }
 
     @Query(
         """
@@ -1016,7 +912,7 @@ interface ArticleDao {
     )
     fun queryLatestUnreadArticleFlow(accountId: Int, limit: Int): Flow<List<ArticleWithFeed>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insert(vararg article: Article)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

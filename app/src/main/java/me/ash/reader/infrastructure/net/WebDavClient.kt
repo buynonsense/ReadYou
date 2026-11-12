@@ -2,6 +2,9 @@ package me.ash.reader.infrastructure.net
 
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import me.ash.reader.infrastructure.di.withServerTrust
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -9,6 +12,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.File
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 
 /**
  * Minimal WebDAV client built on OkHttp, providing the subset of methods
@@ -19,6 +25,7 @@ class WebDavClient
 @Inject
 constructor(
     private val okHttpClient: OkHttpClient,
+    @ApplicationContext private val context: Context,
 ) {
 
     /**
@@ -43,12 +50,27 @@ constructor(
      */
     fun put(url: String, username: String?, password: String?, body: ByteArray): Response {
         val requestBody = body.toRequestBody(JSON_MEDIA_TYPE)
-        var response = execute(request(url, username, password) { put(requestBody) })
+        return putBody(url, username, password, requestBody)
+    }
+
+    fun putFile(url: String, username: String?, password: String?, file: File, ifMatch: String? = null, ifAbsent: Boolean = false): Response =
+        putBody(url, username, password, file.asRequestBody("application/octet-stream".toMediaType()), ifMatch, ifAbsent)
+
+    fun putConditional(url: String, username: String?, password: String?, body: ByteArray, ifMatch: String? = null, ifAbsent: Boolean = false): Response =
+        putBody(url, username, password, body.toRequestBody(JSON_MEDIA_TYPE), ifMatch, ifAbsent)
+
+    private fun putBody(url: String, username: String?, password: String?, requestBody: RequestBody, ifMatch: String? = null, ifAbsent: Boolean = false): Response {
+        val build: Request.Builder.() -> Unit = {
+            put(requestBody)
+            ifMatch?.let { header("If-Match", it) }
+            if (ifAbsent) header("If-None-Match", "*")
+        }
+        var response = execute(request(url, username, password, build))
         // Some servers answer 409 when intermediate collections do not exist.
         if (response.code == 409) {
             response.close()
             createParentCollections(url, username, password)
-            response = execute(request(url, username, password) { put(requestBody) })
+            response = execute(request(url, username, password, build))
         }
         return response
     }
@@ -64,7 +86,9 @@ constructor(
         for (segment in segments) {
             current = if (current.endsWith("/")) current + segment else "$current/$segment"
             // 405 means the collection already exists, which is fine.
-            mkcol(current, username, password).close()
+            mkcol(current, username, password).use {
+                check(it.isSuccessful || it.code == 405) { "Could not create WebDAV collection: HTTP ${it.code}" }
+            }
         }
     }
 
@@ -84,7 +108,7 @@ constructor(
             .apply(block)
             .build()
 
-    private fun execute(request: Request): Response = client.newCall(request).execute()
+    private fun execute(request: Request): Response = client.withServerTrust(context, request.url.toString()).newCall(request).execute()
 
     // WebDAV servers can be slow or return big payloads; reuse the app client
     // but make the timeouts explicit.

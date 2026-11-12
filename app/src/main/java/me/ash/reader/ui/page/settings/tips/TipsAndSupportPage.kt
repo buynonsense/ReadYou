@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -97,6 +98,7 @@ fun TipsAndSupportPage(
     navigateToLicenseList: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var currentVersion by remember { mutableStateOf("") }
@@ -178,7 +180,7 @@ fun TipsAndSupportPage(
                                 onTap = {
                                     updateViewModel.checkUpdate(
                                         {
-                                            context.showToast(context.getString(R.string.checking_updates))
+                                            context.showToast(resources.getString(R.string.checking_updates))
                                             context.dataStore.put(
                                                 DataStoreKey.skipVersionNumber,
                                                 ""
@@ -187,7 +189,7 @@ fun TipsAndSupportPage(
                                         {
                                             if (!it) {
                                                 context.showToast(
-                                                    context.getString(R.string.is_latest_version)
+                                                    resources.getString(R.string.is_latest_version)
                                                 )
                                             }
                                         }
@@ -265,7 +267,7 @@ fun TipsAndSupportPage(
                                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 view.playSoundEffect(SoundEffectConstants.CLICK)
                                 context.openURL(
-                                    context.getString(R.string.github_link),
+                                    resources.getString(R.string.github_link),
                                     OpenLinkPreference.AutoPreferCustomTabs
                                 )
                             })
@@ -279,7 +281,7 @@ fun TipsAndSupportPage(
                                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 view.playSoundEffect(SoundEffectConstants.CLICK)
                                 context.openURL(
-                                    context.getString(R.string.telegram_link),
+                                    resources.getString(R.string.telegram_link),
                                     OpenLinkPreference.AutoPreferCustomTabs
                                 )
                             })
@@ -293,7 +295,7 @@ fun TipsAndSupportPage(
                                 view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                 view.playSoundEffect(SoundEffectConstants.CLICK)
                                 context.openURL(
-                                    context.getString(R.string.wiki_link),
+                                    resources.getString(R.string.wiki_link),
                                     OpenLinkPreference.AutoPreferCustomTabs
                                 )
                             })

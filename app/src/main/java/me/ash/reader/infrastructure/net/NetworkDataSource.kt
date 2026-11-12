@@ -13,6 +13,7 @@ import retrofit2.http.GET
 import retrofit2.http.Streaming
 import retrofit2.http.Url
 import java.io.File
+import okhttp3.OkHttpClient
 
 interface NetworkDataSource {
 
@@ -27,9 +28,10 @@ interface NetworkDataSource {
 
         private var instance: NetworkDataSource? = null
 
-        fun getInstance(): NetworkDataSource {
+        fun getInstance(client: OkHttpClient): NetworkDataSource {
             return instance ?: synchronized(this) {
                 instance ?: Retrofit.Builder()
+                    .client(client)
                     .baseUrl("https://api.github.com/")
                     .addConverterFactory(GsonConverterFactory.create())
                     .build().create(NetworkDataSource::class.java).also {
@@ -65,14 +67,14 @@ fun ResponseBody.downloadToFileWithProgress(saveFile: File): Flow<Download> =
                         outputStream.write(data, 0, bytes)
                         progressBytes += bytes
 
-                        emit(Download.Progress(percent = ((progressBytes * 100) / totalBytes).toInt()))
+                        if (totalBytes > 0) emit(Download.Progress(percent = ((progressBytes * 100) / totalBytes).toInt().coerceIn(0, 100)))
                     }
 
                     when {
-                        progressBytes < totalBytes ->
+                        totalBytes >= 0 && progressBytes < totalBytes ->
                             throw Exception("missing bytes")
 
-                        progressBytes > totalBytes ->
+                        totalBytes >= 0 && progressBytes > totalBytes ->
                             throw Exception("too many bytes")
 
                         else ->

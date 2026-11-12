@@ -161,7 +161,7 @@ interface FeedDao {
     )
     suspend fun queryByLink(accountId: Int, url: String): List<Feed>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(vararg feed: Feed)
+    @androidx.room.Upsert suspend fun insert(vararg feed: Feed)
 
     @Insert suspend fun insertList(feeds: List<Feed>): List<Long>
 
@@ -200,7 +200,8 @@ interface FeedDao {
             .let { updateAll(it) }
     }
 
-    @Insert suspend fun insertArchivedArticles(links: List<ArchivedArticle>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertArchivedArticles(links: List<ArchivedArticle>)
 
     @Query(
         """

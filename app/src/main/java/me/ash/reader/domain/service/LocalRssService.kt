@@ -13,6 +13,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import me.ash.reader.infrastructure.coroutine.runCatchingCancellable
 import me.ash.reader.domain.data.SyncLogger
 import me.ash.reader.domain.model.account.AccountType
 import me.ash.reader.domain.model.feed.Feed
@@ -42,6 +43,7 @@ constructor(
     private val workManager: WorkManager,
     private val accountService: AccountService,
     private val syncLogger: SyncLogger,
+    private val statusStore: me.ash.reader.infrastructure.preference.AccountSyncStatusStore,
 ) :
     AbstractRssRepository(
         articleDao,
@@ -60,7 +62,7 @@ constructor(
         feedId: String?,
         groupId: String?
     ): ListenableWorker.Result = supervisorScope {
-        return@supervisorScope runCatching {
+        return@supervisorScope runCatchingCancellable {
             val preTime = System.currentTimeMillis()
             val preDate = Date(preTime)
             val currentAccount = accountService.getAccountById(accountId)!!
@@ -71,10 +73,13 @@ constructor(
 
             val feedsToSync =
                 when {
-                    feedId != null -> listOfNotNull(feedDao.queryById(feedId))
+                    feedId != null -> listOfNotNull(feedDao.queryById(feedId)?.takeIf { it.accountId == accountId })
                     groupId != null -> feedDao.queryByGroupId(accountId, groupId)
                     else -> feedDao.queryAll(accountId)
                 }
+
+            val completed = java.util.concurrent.atomic.AtomicInteger()
+            statusStore.progress(accountId, "rss-sources", 0, feedsToSync.size)
 
             feedsToSync
                 .mapIndexed { _, currentFeed ->
@@ -101,16 +106,17 @@ constructor(
                                     fetchedFeed.copy(articles = newArticles, feed = currentFeed)
                                 )
                             }
+                            statusStore.progress(accountId, "rss-sources", completed.incrementAndGet(), feedsToSync.size)
                         }
                     }
                 }
                 .awaitAll()
 
             Timber.tag("RlOG").i("onCompletion: ${System.currentTimeMillis() - preTime}")
-            accountService.update(currentAccount.copy(updateAt = Date()))
+            accountService.update(accountId) { copy(updateAt = Date()) }
             ListenableWorker.Result.success()
         }
-            .onFailure { syncLogger.log(it) }
+            .onFailure { syncLogger.log(it, accountId) }
             .getOrNull() ?: ListenableWorker.Result.retry()
     }
 

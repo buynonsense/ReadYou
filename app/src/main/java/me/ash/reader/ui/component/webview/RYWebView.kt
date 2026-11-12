@@ -102,7 +102,6 @@ fun RYWebView(
             it.apply {
                 Log.i("RLog", "maxWidth: ${maxWidth}")
                 Log.i("RLog", "readingFont: ${context.filesDir.absolutePath}")
-                Log.i("RLog", "CustomWebView: ${content}")
                 settings.defaultFontSize = fontSize
                 loadDataWithBaseURL(
                     null,

@@ -96,8 +96,8 @@ constructor(
     override val deleteSubscription: Boolean = true
     override val updateSubscription: Boolean = true
 
-    private suspend fun getGoogleReaderAPI() =
-        GoogleReaderSecurityKey(accountService.getCurrentAccount().securityKey).run {
+    private fun getGoogleReaderAPI(account: Account) =
+        GoogleReaderSecurityKey(account.securityKey).run {
             GoogleReaderAPI.getInstance(
                 context = context,
                 serverUrl = serverUrl!!,
@@ -111,11 +111,11 @@ constructor(
         }
 
     override suspend fun validCredentials(account: Account): Boolean {
-        return getGoogleReaderAPI().validCredentials().also { success ->
+        return getGoogleReaderAPI(account).validCredentials().also { success ->
             if (success)
                 try {
-                    getGoogleReaderAPI().getUserInfo().userName?.let {
-                        accountService.update(account.copy(name = it))
+                    getGoogleReaderAPI(account).getUserInfo().userName?.let {
+                        account.id?.let { id -> accountService.update(id) { copy(name = it) } }
                     }
                 } catch (ignore: Exception) {
                     Log.e("RLog", "get user info is failed: ", ignore)
@@ -135,14 +135,15 @@ constructor(
         isFullContent: Boolean,
         isBrowser: Boolean,
     ) {
-        val accountId = accountService.getCurrentAccountId()
-        val quickAdd = getGoogleReaderAPI().subscriptionQuickAdd(feedLink)
+        val accountId = requireNotNull(groupDao.queryById(groupId)).accountId
+        val api = getGoogleReaderAPI(requireNotNull(accountService.getAccountById(accountId)))
+        val quickAdd = api.subscriptionQuickAdd(feedLink)
         val feedId = quickAdd.streamId?.ofFeedStreamIdToId()
         requireNotNull(feedId) { "feedId is null" }
         val feedTitle = searchedFeed.title
         requireNotNull(feedTitle) { "feedTitle is null" }
 
-        getGoogleReaderAPI()
+        api
             .subscriptionEdit(
                 destFeedId = feedId,
                 destCategoryId = groupId.dollarLast(),
@@ -166,9 +167,9 @@ constructor(
         // super.doSyncOneTime()
     }
 
-    override suspend fun addGroup(destFeed: Feed?, newGroupName: String): String {
-        val accountId = accountService.getCurrentAccountId()
-        getGoogleReaderAPI()
+    override suspend fun addGroup(destFeed: Feed?, newGroupName: String, accountId: Int): String {
+        require(destFeed == null || destFeed.accountId == accountId)
+        getGoogleReaderAPI(requireNotNull(accountService.getAccountById(accountId)))
             .subscriptionEdit(
                 destFeedId = destFeed?.id?.dollarLast(),
                 destCategoryId = newGroupName,
@@ -179,14 +180,14 @@ constructor(
     }
 
     override suspend fun renameGroup(group: Group) {
-        getGoogleReaderAPI()
+        getGoogleReaderAPI(requireNotNull(accountService.getAccountById(group.accountId)))
             .renameTag(categoryId = group.id.dollarLast(), renameToName = group.name)
         // TODO: Whether to switch the old ID to the new ID?
         super.renameGroup(group)
     }
 
     override suspend fun moveFeed(originGroupId: String, feed: Feed) {
-        getGoogleReaderAPI()
+        getGoogleReaderAPI(requireNotNull(accountService.getAccountById(feed.accountId)))
             .subscriptionEdit(
                 destFeedId = feed.id.dollarLast(),
                 destCategoryId = feed.groupId.dollarLast().ofCategoryStreamIdToId(),
@@ -200,22 +201,22 @@ constructor(
     }
 
     override suspend fun renameFeed(feed: Feed) {
-        getGoogleReaderAPI()
+        getGoogleReaderAPI(requireNotNull(accountService.getAccountById(feed.accountId)))
             .subscriptionEdit(destFeedId = feed.id.dollarLast(), destFeedName = feed.name)
         // TODO: Whether to switch the old ID to the new ID?
         super.renameFeed(feed)
     }
 
     override suspend fun deleteGroup(group: Group, onlyDeleteNoStarred: Boolean?) {
-        feedDao.queryByGroupId(accountService.getCurrentAccountId(), group.id).forEach {
+        feedDao.queryByGroupId(group.accountId, group.id).forEach {
             deleteFeed(it)
         }
-        getGoogleReaderAPI().disableTag(group.id.dollarLast())
+        getGoogleReaderAPI(requireNotNull(accountService.getAccountById(group.accountId))).disableTag(group.id.dollarLast())
         super.deleteGroup(group, false)
     }
 
     override suspend fun deleteFeed(feed: Feed, onlyDeleteNoStarred: Boolean?) {
-        getGoogleReaderAPI()
+        getGoogleReaderAPI(requireNotNull(accountService.getAccountById(feed.accountId)))
             .subscriptionEdit(action = "unsubscribe", destFeedId = feed.id.dollarLast())
         super.deleteFeed(feed, false)
     }
@@ -265,7 +266,7 @@ constructor(
             ) {
                 "account type is invalid"
             }
-            val googleReaderAPI = getGoogleReaderAPI()
+            val googleReaderAPI = getGoogleReaderAPI(requireNotNull(accountService.getAccountById(accountId)))
             googleReaderAPI.refreshCredentialsIfNeeded()
             val lastMonthAt =
                 Calendar.getInstance()
@@ -509,11 +510,12 @@ constructor(
                 .filter { it.id !in remoteFeeds.await().map { feed -> feed.id } }
                 .forEach { super.deleteFeed(it, true) }
 
-            accountService.update(account.copy(updateAt = Date()))
+            accountService.update(accountId) { copy(updateAt = Date()) }
             ListenableWorker.Result.success()
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.tag("RLog").e(e, "On sync exception: ${e.message}")
-            syncLogger.log(e)
+            syncLogger.log(e, accountId)
             //                withContext(mainDispatcher) {
             //                    context.showToast(e.message) todo: find a good way to
             // notice user
@@ -534,7 +536,7 @@ constructor(
             ) {
                 "account type is invalid"
             }
-            val googleReaderAPI = getGoogleReaderAPI()
+            val googleReaderAPI = getGoogleReaderAPI(account)
 
             val feed = feedDao.queryById(feedId)!!
 
@@ -764,73 +766,8 @@ constructor(
             ?: it.origin?.htmlUrl
             ?: ""
 
-    override suspend fun markAsRead(
-        groupId: String?,
-        feedId: String?,
-        articleId: String?,
-        before: Date?,
-        isUnread: Boolean,
-    ) {
-        val accountId = accountService.getCurrentAccountId()
-        val googleReaderAPI = getGoogleReaderAPI()
-        val markList: List<String> =
-            when {
-                groupId != null -> {
-                    if (before == null) {
-                            articleDao.queryMetadataByGroupIdWhenIsUnread(
-                                accountId,
-                                groupId,
-                                !isUnread,
-                            )
-                        } else {
-                            articleDao.queryMetadataByGroupIdWhenIsUnread(
-                                accountId,
-                                groupId,
-                                !isUnread,
-                                before,
-                            )
-                        }
-                        .map { it.id.dollarLast() }
-                }
-
-                feedId != null -> {
-                    if (before == null) {
-                            articleDao.queryMetadataByFeedId(accountId, feedId, !isUnread)
-                        } else {
-                            articleDao.queryMetadataByFeedId(accountId, feedId, !isUnread, before)
-                        }
-                        .map { it.id.dollarLast() }
-                }
-
-                articleId != null -> {
-                    listOf(articleId.dollarLast())
-                }
-
-                else -> {
-                    if (before == null) {
-                            articleDao.queryMetadataAll(accountId, isUnread = !isUnread)
-                        } else {
-                            articleDao.queryMetadataAll(accountId, !isUnread, before)
-                        }
-                        .map { it.id.dollarLast() }
-                }
-            }
-        super.markAsRead(groupId, feedId, articleId, before, isUnread)
-        markList
-            .takeIf { it.isNotEmpty() }
-            ?.chunked(500)
-            ?.forEachIndexed { index, it ->
-                Log.d("RLog", "sync markAsRead:  ${(index * 500) + it.size}/${markList.size} num")
-                googleReaderAPI.editTag(
-                    itemIds = it,
-                    mark = if (!isUnread) GoogleReaderAPI.Stream.Read.tag else null,
-                    unmark = if (isUnread) GoogleReaderAPI.Stream.Read.tag else null,
-                )
-            }
-    }
-
-    override suspend fun syncReadStatus(articleIds: Set<String>, isUnread: Boolean): Set<String> {
-        val googleReaderAPI = getGoogleReaderAPI()
+    override suspend fun syncReadStatus(accountId: Int, articleIds: Set<String>, isUnread: Boolean): Set<String> {
+        val googleReaderAPI = getGoogleReaderAPI(requireNotNull(accountService.getAccountById(accountId)))
         val syncedEntries = mutableSetOf<String>()
         articleIds
             .takeIf { it.isNotEmpty() }
@@ -855,13 +792,18 @@ constructor(
         return syncedEntries
     }
 
-    override suspend fun markAsStarred(articleId: String, isStarred: Boolean) {
-        super.markAsStarred(articleId, isStarred)
-        getGoogleReaderAPI()
-            .editTag(
-                itemIds = listOf(articleId.dollarLast()),
+    override suspend fun syncStarredStatus(accountId: Int, articleIds: Set<String>, isStarred: Boolean): Set<String> {
+        val api = getGoogleReaderAPI(requireNotNull(accountService.getAccountById(accountId)))
+        val synced = mutableSetOf<String>()
+        articleIds.chunked(500).forEach { ids ->
+            api.editTag(
+                itemIds = ids.map { it.dollarLast() },
                 mark = if (isStarred) GoogleReaderAPI.Stream.Starred.tag else null,
                 unmark = if (!isStarred) GoogleReaderAPI.Stream.Starred.tag else null,
-            )
+            ).getOrThrow()
+            synced += ids
+        }
+        return synced
     }
+
 }

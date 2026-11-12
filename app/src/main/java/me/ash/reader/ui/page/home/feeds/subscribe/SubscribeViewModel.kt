@@ -35,7 +35,7 @@ constructor(
     private val rssHelper: RssHelper,
     private val androidStringsHelper: AndroidStringsHelper,
     @ApplicationScope private val applicationScope: CoroutineScope,
-    accountService: AccountService,
+    private val accountService: AccountService,
 ) : ViewModel() {
 
     private val _subscribeUiState = MutableStateFlow(SubscribeUiState())
@@ -49,8 +49,10 @@ constructor(
 
     init {
         viewModelScope.launch {
-            accountService.currentAccountFlow.collectLatest {
-                rssService.get().pullGroups().collect { groupsFlow.value = it }
+            accountService.currentAccountFlow.collectLatest { account ->
+                if (account == null) return@collectLatest
+                hideDrawer()
+                rssService.get(account.type.id).pullGroups(requireNotNull(account.id)).collect { groupsFlow.value = it }
             }
         }
         viewModelScope.launch {
@@ -70,9 +72,10 @@ constructor(
     }
 
     fun importFromInputStream(inputStream: InputStream) {
+        val account = accountService.getCurrentAccount()
         applicationScope.launch {
-            opmlService.saveToDatabase(inputStream)
-            rssService.get().doSyncOneTime()
+            inputStream.use { opmlService.saveToDatabase(it, requireNotNull(account.id)) }
+            rssService.get(account.type.id).doSyncOneTime(requireNotNull(account.id))
         }
     }
 
@@ -87,10 +90,11 @@ constructor(
 
     fun addNewGroup() {
         if (_subscribeUiState.value.newGroupContent.isNotBlank()) {
+            val account = accountService.getCurrentAccount()
             applicationScope.launch {
                 // TODO: How to add a single group without no feeds via Google Reader API?
                 selectedGroup(
-                    rssService.get().addGroup(null, _subscribeUiState.value.newGroupContent)
+                    rssService.get(account.type.id).addGroup(null, _subscribeUiState.value.newGroupContent, requireNotNull(account.id))
                 )
                 hideNewGroupDialog()
                 _subscribeUiState.update { it.copy(newGroupContent = "") }
@@ -132,11 +136,14 @@ constructor(
     fun searchFeed() {
         val currentState = _subscribeState.value
         if (currentState !is SubscribeState.Idle) return
+        val account = accountService.getCurrentAccount()
+        val accountId = requireNotNull(account.id)
+        val repository = rssService.get(account.type.id)
         viewModelScope.launch {
             val feedLink = currentState.linkState.text.trim().toString().formatUrl()
             currentState.linkState.edit { this.replace(0, length, feedLink) }
 
-            if (rssService.get().isFeedExist(feedLink)) {
+            if (repository.isFeedExist(feedLink, accountId)) {
                 _subscribeState.value =
                     currentState.copy(
                         errorMessage = androidStringsHelper.getString(R.string.already_subscribed)
@@ -150,7 +157,7 @@ constructor(
                 viewModelScope.launch {
                     runCatching { rssHelper.searchFeed(feedLink) }
                         .onSuccess {
-                            if (rssService.get().isFeedExist(it.feedLink)) {
+                            if (repository.isFeedExist(it.feedLink, accountId)) {
                                 _subscribeState.value =
                                     currentState.copy(
                                         errorMessage =
@@ -160,6 +167,7 @@ constructor(
                                     )
                                 return@onSuccess
                             }
+                            if (accountService.getCurrentAccountId() != accountId) return@onSuccess
                             val groups = groupsFlow.value
                             _subscribeState.value =
                                 SubscribeState.Configure(
@@ -191,10 +199,11 @@ constructor(
         val state = _subscribeState.value
         if (state !is SubscribeState.Configure) return
 
+        val group = state.groups.firstOrNull { it.id == state.selectedGroupId } ?: return
         applicationScope.launch {
             val searchedFeed = state.searchedFeed
             rssService
-                .get()
+                .forAccount(group.accountId)
                 .subscribe(
                     searchedFeed = searchedFeed,
                     feedLink = state.feedLink,

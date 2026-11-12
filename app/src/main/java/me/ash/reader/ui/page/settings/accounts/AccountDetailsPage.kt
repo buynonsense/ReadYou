@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.BaselineShift
@@ -83,8 +84,10 @@ fun AccountDetailsPage(
 ) {
     val uiState = viewModel.accountUiState.collectAsStateValue()
     val context = LocalContext.current
-
+    val resources = LocalResources.current
     val selectedAccount = uiState.selectedAccount.collectAsStateValue(initial = null)
+    val syncStatuses = viewModel.syncStatuses.collectAsStateValue()
+    val syncStatus = selectedAccount?.id?.let { syncStatuses[it] }
 
     var nameValue by remember { mutableStateOf(selectedAccount?.name) }
     var nameDialogVisible by remember { mutableStateOf(false) }
@@ -172,8 +175,32 @@ fun AccountDetailsPage(
                     )
                     selectedAccount?.let {
                         SettingItem(
+                            title = stringResource(R.string.account_sync_status),
+                            desc = when {
+                                syncStatus?.error != null -> syncStatus.error
+                                syncStatus?.stage == "interrupted" -> stringResource(R.string.sync_interrupted)
+                                syncStatus?.running == true && syncStatus.stage == "rss-sources" -> stringResource(R.string.sync_stage_sources, syncStatus.completed, syncStatus.total)
+                                syncStatus?.running == true && syncStatus.stage == "rss-pages" -> stringResource(R.string.sync_stage_pages, syncStatus.completed)
+                                syncStatus?.running == true -> stringResource(when (syncStatus.stage) {
+                                    "cleanup" -> R.string.sync_stage_cleanup
+                                    "webdav" -> R.string.webdav_sync
+                                    else -> R.string.loading
+                                })
+                                else -> stringResource(R.string.sync_ready)
+                            },
+                            onClick = { viewModel.retrySync(requireNotNull(it.id)) },
+                            enabled = syncStatus?.running != true,
+                        ) {}
+                        syncStatus?.error?.let { message -> Tips(text = message) }
+                        syncStatus?.pendingStateError?.let { message ->
+                            SettingItem(title = stringResource(R.string.pending_state_changes), desc = message, onClick = { viewModel.retrySync(requireNotNull(it.id)) }) {}
+                        }
+                        syncStatus?.webDavError?.let { message ->
+                            SettingItem(title = stringResource(R.string.webdav_sync), desc = message, onClick = navigateToWebDavSync) {}
+                        }
+                        SettingItem(
                             title = stringResource(R.string.last_updated),
-                            desc = selectedAccount.updateAt.toString(),
+                            desc = (syncStatus?.lastSuccess?.takeIf { it > 0 }?.let(::Date) ?: selectedAccount.updateAt).toString(),
                             onClick = {},
                             enabled = false,
                         ) {}
@@ -359,7 +386,7 @@ fun AccountDetailsPage(
                         viewModel.clear(it) {
                             viewModel.hideClearDialog()
                             context.showToastLong(
-                                context.getString(R.string.clear_all_articles_toast)
+                                resources.getString(R.string.clear_all_articles_toast)
                             )
                         }
                     }
@@ -392,7 +419,7 @@ fun AccountDetailsPage(
                     selectedAccount?.id?.let {
                         viewModel.delete(it) {
                             onBack()
-                            context.showToastLong(context.getString(R.string.delete_account_toast))
+                            context.showToastLong(resources.getString(R.string.delete_account_toast))
                         }
                     }
                 }
@@ -426,13 +453,13 @@ fun AccountDetailsPage(
                 items(
                     listOf(
                         RadioDialogOption(
-                            text = context.getString(R.string.include_additional_info),
+                            text = resources.getString(R.string.include_additional_info),
                             selected = uiState.exportOPMLMode == ExportOPMLMode.ATTACH_INFO,
                         ) {
                             viewModel.changeExportOPMLMode(ExportOPMLMode.ATTACH_INFO)
                         },
                         RadioDialogOption(
-                            text = context.getString(R.string.exclude),
+                            text = resources.getString(R.string.exclude),
                             selected = uiState.exportOPMLMode == ExportOPMLMode.NO_ATTACH,
                         ) {
                             viewModel.changeExportOPMLMode(ExportOPMLMode.NO_ATTACH)

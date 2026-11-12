@@ -37,6 +37,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import me.ash.reader.R
@@ -109,20 +110,15 @@ class ArticleCardWidget() : GlanceAppWidget() {
         provideContent {
             val (_, dataSource) = configFlow.collectAsStateValue(initialConfig)
 
-            val articleFlow =
-                remember(dataSource) { repository.getData(dataSource) }
-                    .map {
-                        it.articles.let {
-                            it.firstOrNull { !it.imgUrl.isNullOrEmpty() } ?: it.firstOrNull()
-                        }
+            val cardFlow = remember(dataSource) {
+                repository.getData(dataSource).map { data ->
+                    val article = data.articles.let {
+                        it.firstOrNull { !it.imgUrl.isNullOrEmpty() } ?: it.firstOrNull()
                     }
-
-            val article = articleFlow.collectAsStateValue(initialArticle)
-
-            val bitmap =
-                articleFlow
-                    .map { repository.fetchBitmap(it?.imgUrl) }
-                    .collectAsStateValue(initialBitmap)
+                    article to repository.fetchBitmap(article?.imgUrl)
+                }.flowOn(Dispatchers.IO)
+            }
+            val (article, bitmap) = cardFlow.collectAsStateValue(initialArticle to initialBitmap)
 
             GlanceTheme { ArticleCard(article = article, dataSource = dataSource, bitmap = bitmap) }
         }

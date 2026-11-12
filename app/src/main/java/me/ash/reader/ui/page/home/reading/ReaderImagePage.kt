@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -68,7 +69,7 @@ fun ReaderImageViewer(
         Box(modifier = Modifier.fillMaxSize()) {
             val view = LocalView.current
             val context = LocalContext.current
-
+            val resources = LocalResources.current
             val dialogWindowProvider = view.parent as? DialogWindowProvider
             dialogWindowProvider?.window?.setDimAmount(1f)
 
@@ -112,7 +113,7 @@ fun ReaderImageViewer(
                         if (result) {
                             onDownloadImage(imageData.imageUrl)
                         } else {
-                            context.showToast(context.getString(R.string.permission_denied))
+                            context.showToast(resources.getString(R.string.permission_denied))
                         }
                     },
                 )

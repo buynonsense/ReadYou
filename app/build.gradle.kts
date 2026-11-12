@@ -107,6 +107,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures { buildConfig = true }
+    testOptions { unitTests.isIncludeAndroidResources = true }
+    sourceSets.getByName("test").resources.srcDir("schemas")
     packaging {
         resources.excludes.add("/META-INF/{AL2.0,LGPL2.1}")
         resources.excludes.add("rome-utils-*.jar")
@@ -207,4 +209,7 @@ dependencies {
     testImplementation(libs.mockito.core)
     testImplementation(libs.mockito.junit.jupiter)
     testImplementation(libs.mockito.kotlin)
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.0.0-alpha.12")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:5.0.0-alpha.12")
 }

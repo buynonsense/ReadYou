@@ -26,9 +26,10 @@ import coil.ImageLoader
 import dagger.hilt.android.AndroidEntryPoint
 import java.lang.reflect.Field
 import javax.inject.Inject
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import me.ash.reader.domain.data.FilterStateUseCase
+import me.ash.reader.domain.model.general.Filter
 import me.ash.reader.domain.service.AccountService
 import me.ash.reader.domain.service.WidgetUpdateWorker
 import me.ash.reader.infrastructure.compose.ProvideCompositionLocals
@@ -59,6 +60,8 @@ class MainActivity : AppCompatActivity() {
     @Inject lateinit var workManager: WorkManager
 
     @Inject lateinit var filterUseCase: FilterStateUseCase
+
+    @Inject lateinit var launchTargetResolver: LaunchTargetResolver
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,36 +107,11 @@ class MainActivity : AppCompatActivity() {
                         AppTheme(useDarkTheme = LocalDarkTheme.current.isDarkTheme()) {
                             val isFirstLaunch = remember { isFirstLaunch }
                             val initialPage = remember { initialPage }
-                            val launchAction = intent.getLaunchAction()
-
                             val startDestination = remember {
                                 if (isFirstLaunch) listOf(Route.Startup)
-                                else
-                                    when (launchAction) {
-                                        is LaunchAction.OpenArticle -> {
-                                            filterUseCase.init(
-                                                launchAction.feedId,
-                                                launchAction.groupId,
-                                            )
-                                            listOf(
-                                                Route.Feeds,
-                                                Route.Reading(launchAction.articleId),
-                                            )
-                                        }
-                                        is LaunchAction.Subscribe -> {
-                                            subscribeViewModel.handleSharedUrlFromIntent(
-                                                launchAction.url
-                                            )
-                                            listOf(Route.Feeds)
-                                        }
-                                        else -> {
-                                            if (
-                                                initialPage == InitialPagePreference.FlowPage.value
-                                            ) {
-                                                listOf(Route.Feeds, Route.Reading(null))
-                                            } else listOf(Route.Feeds)
-                                        }
-                                    }
+                                else if (initialPage == InitialPagePreference.FlowPage.value)
+                                    listOf(Route.Feeds, Route.Reading(null))
+                                else listOf(Route.Feeds)
                             }
 
                             val backStack = rememberNavBackStack(*startDestination.toTypedArray())
@@ -154,52 +132,30 @@ class MainActivity : AppCompatActivity() {
     ) {
         val scope = rememberCoroutineScope()
         DisposableEffect(backStack) {
+            var navigationJob: Job? = null
             val listener =
                 Consumer<Intent> { intent ->
-                    intent.getLaunchAction()?.let { action ->
-                        when (action) {
-                            is LaunchAction.OpenArticle -> {
-                                val (articleId, feedId, groupId) = action
-                                filterUseCase.init(feedId, groupId)
-                                val readingIndex = backStack.indexOfFirst { it is Route.Reading }
-                                if (readingIndex != -1) {
-                                    repeat(backStack.size - readingIndex) {
-                                        backStack.removeLastOrNull()
-                                    }
+                    intent.consumeLaunchAction()?.let { action ->
+                        navigationJob?.cancel()
+                        navigationJob = scope.launch {
+                            when (action) {
+                                is LaunchAction.OpenArticle, is LaunchAction.OpenArticleList -> {
+                                    val target = launchTargetResolver.resolve(action) ?: return@launch
+                                    accountService.switch(target.account)
+                                    filterUseCase.updateFilterState(
+                                        feed = target.feed,
+                                        group = target.group,
+                                        filter = Filter.Unread,
+                                        searchContent = null,
+                                    )
+                                    backStack.clear()
+                                    backStack.add(Route.Feeds)
+                                    backStack.add(Reading(articleId = target.articleId))
                                 }
-                                scope.launch {
-                                    delay(500L)
-                                    backStack.add(Reading(articleId = articleId))
-                                }
-                            }
-
-                            is LaunchAction.OpenArticleList -> {
-                                val (accountId, feedId, groupId) = action
-                                if (
-                                    accountId != null &&
-                                        accountId != accountService.getCurrentAccountId()
-                                )
-                                    return@Consumer
-                                filterUseCase.init(feedId, groupId)
-                                val readingIndex = backStack.indexOfFirst { it is Reading }
-                                if (readingIndex != -1) {
-                                    repeat(backStack.size - readingIndex) {
-                                        backStack.removeLastOrNull()
-                                    }
-                                }
-                                backStack.add(Reading(articleId = null))
-                            }
-
-                            is LaunchAction.Subscribe -> {
-                                subscribeViewModel.handleSharedUrlFromIntent(action.url)
-                                val feedsIndex = backStack.indexOf(Route.Feeds)
-                                if (feedsIndex != -1) {
-                                    repeat(backStack.size - (feedsIndex + 1)) {
-                                        backStack.removeLastOrNull()
-                                    }
-                                } else {
-                                    backStack.add(0, Route.Feeds)
-                                    repeat(backStack.size - 1) { backStack.removeLastOrNull() }
+                                is LaunchAction.Subscribe -> {
+                                    backStack.clear()
+                                    backStack.add(Route.Feeds)
+                                    subscribeViewModel.handleSharedUrlFromIntent(action.url)
                                 }
                             }
                         }
@@ -207,7 +163,10 @@ class MainActivity : AppCompatActivity() {
                 }
             listener.accept(intent) // consume the launch intent as well
             addOnNewIntentListener(listener)
-            onDispose { removeOnNewIntentListener(listener) }
+            onDispose {
+                navigationJob?.cancel()
+                removeOnNewIntentListener(listener)
+            }
         }
     }
 
@@ -220,17 +179,25 @@ class MainActivity : AppCompatActivity() {
 sealed interface LaunchAction {
     data class Subscribe(val url: String) : LaunchAction
 
-    data class OpenArticle(val articleId: String, val feedId: String?, val groupId: String?) :
-        LaunchAction
+    data class OpenArticle(
+        val articleId: String,
+        val feedId: String?,
+        val groupId: String?,
+        val accountId: Int? = null,
+    ) : LaunchAction
 
     data class OpenArticleList(val accountId: Int?, val feedId: String?, val groupId: String?) :
         LaunchAction
 }
 
-private fun Intent.getLaunchAction(): LaunchAction? {
+internal fun Intent.consumeLaunchAction(): LaunchAction? {
     return when (action) {
         Intent.ACTION_VIEW -> {
-            dataString?.let { LaunchAction.Subscribe(it) }
+            dataString?.let {
+                data = null
+                action = null
+                LaunchAction.Subscribe(it)
+            }
         }
 
         Intent.ACTION_SEND -> {
@@ -252,7 +219,7 @@ private fun Intent.getLaunchAction(): LaunchAction? {
             }
 
             if (articleId != null) {
-                LaunchAction.OpenArticle(articleId, feedId, groupId)
+                LaunchAction.OpenArticle(articleId, feedId, groupId, accountId.takeIf { it > 0 })
             } else if (feedId != null || groupId != null || accountId != -1) {
                 LaunchAction.OpenArticleList(
                     accountId = if (accountId != -1) accountId else null,

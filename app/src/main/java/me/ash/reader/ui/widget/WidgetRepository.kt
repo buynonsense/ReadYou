@@ -19,6 +19,10 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -69,20 +73,24 @@ constructor(
             }
         }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun getCurrentDataSources(): Flow<List<NamedDataSource>> =
-        accountService.currentAccountFlow.mapNotNull { account ->
-            val accountId = account?.id!!
-            val feeds = feedDao.queryAll(accountId)
-            val groups = groupDao.queryAll(accountId)
-            buildList {
-                add(NamedDataSource(name = account.name, DataSource.Account(accountId)))
-                groups.mapTo(this) {
-                    NamedDataSource(name = it.name, dataSource = DataSource.Group(it.id))
+        accountService.getAccounts().flatMapLatest { accounts ->
+            if (accounts.isEmpty()) flowOf(emptyList())
+            else combine(accounts.map { account ->
+                val accountId = requireNotNull(account.id)
+                groupDao.queryAllGroupWithFeedAsFlow(accountId).map { groups ->
+                    buildList {
+                        add(NamedDataSource(name = account.name, DataSource.Account(accountId)))
+                        groups.forEach { (group, feeds) ->
+                            add(NamedDataSource(name = "${account.name} / ${group.name}", dataSource = DataSource.Group(group.id)))
+                            feeds.forEach { feed ->
+                                add(NamedDataSource(name = "${account.name} / ${feed.name}", dataSource = DataSource.Feed(feed.id)))
+                            }
+                        }
+                    }
                 }
-                feeds.mapTo(this) {
-                    NamedDataSource(name = it.name, dataSource = DataSource.Feed(it.id))
-                }
-            }
+            }) { sources -> sources.flatMap { it } }
         }
 
     fun getDefaultConfig() = WidgetConfig.default(accountService.getCurrentAccountId())
@@ -116,6 +124,7 @@ constructor(
                     imgUrl = article.img,
                     feedName = feed.name,
                     id = article.id,
+                    accountId = article.accountId,
                 )
             }
         }
@@ -179,4 +188,5 @@ data class Article(
     val title: String,
     val imgUrl: String? = null,
     val feedName: String,
+    val accountId: Int? = null,
 )

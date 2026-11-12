@@ -20,6 +20,8 @@ import me.ash.reader.domain.service.AppService
 import me.ash.reader.domain.service.LocalRssService
 import me.ash.reader.domain.service.OpmlService
 import me.ash.reader.domain.service.RssService
+import me.ash.reader.domain.service.SyncWorker
+import me.ash.reader.domain.service.WidgetUpdateWorker
 import me.ash.reader.infrastructure.db.AndroidDatabase
 import me.ash.reader.infrastructure.di.ApplicationScope
 import me.ash.reader.infrastructure.di.IODispatcher
@@ -102,6 +104,7 @@ class AndroidApp : Application(), Configuration.Provider {
         }
         applicationScope.launch {
             accountInit()
+            accountService.migrateCredentials()
             workerInit()
             checkUpdate()
         }
@@ -120,16 +123,18 @@ class AndroidApp : Application(), Configuration.Provider {
     private suspend fun accountInit() {
         withContext(ioDispatcher) {
             if (accountService.isNoAccount()) {
-                launch { accountService.initWithDefaultAccount() }
-                    .invokeOnCompletion {
-                        rssService.get().doSyncOneTime(accountService.getCurrentAccountId())
-                    }
+                accountService.initWithDefaultAccount()
+                rssService.get().doSyncOneTime(accountService.getCurrentAccountId())
             }
         }
     }
 
     private suspend fun workerInit() {
-        rssService.get().initSync()
+        SyncWorker.migrateLegacyWork(workManager)
+        WidgetUpdateWorker.cancelPeriodicWork(workManager)
+        accountService.getAllAccounts().forEach { account ->
+            rssService.get(account.type.id).initSync(account)
+        }
     }
 
     private suspend fun checkUpdate() {

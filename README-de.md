@@ -64,12 +64,21 @@ Nachfolgend sind die bisher erzielten Fortschritte und die Ziele aufgeführt, an
 - [x] Fever
 - [x] Google Reader
 - [x] FreshRSS
-- [ ] Miniflux
-- [ ] Tiny Tiny RSS
-- [ ] Inoreader
-- [ ] Feedly
+- [x] Miniflux
+- [x] Tiny Tiny RSS
+- [x] Inoreader
+- [x] Feedly
 - [ ] Feedbin
 - [ ] ...
+
+### Synchronisierung und Wiederherstellung
+
+- Feedly und Inoreader benötigen ein API-Token mit Lese- und Schreibrechten; Inoreader unterstützt zusätzlich AppId/AppKey. Miniflux akzeptiert ein Token oder Benutzername/Passwort. Tiny Tiny RSS benötigt aktivierten API-Zugriff und die Serveradresse samt Zugangsdaten. Abgelaufene Zugangsdaten lassen sich in den Kontoeinstellungen erneuern. Abonnements dieser vier Dienste werden in deren Weboberfläche verwaltet.
+- Gelesen- und Sternmarkierungen werden dauerhaft lokal gespeichert und bei bestehender Verbindung erneut übertragen. Die Kontoeinstellungen zeigen Fortschritt, letzte erfolgreiche Synchronisierung und Fehler. Entfernte Abonnements werden erst nach erfolgreicher Aktualisierung bereinigt; gespeicherte und für später vorgemerkte Artikel bleiben erhalten.
+- Lokale RSS-Konten werden über dieselbe WebDAV-Adresse, dasselbe Verzeichnis und dieselbe Remote-Konto-ID verbunden. Bei Konflikten ist eine Auswahl erforderlich. Wiederherstellen unterstützt Zusammenführen und Ersetzen. Die letzten 20 früheren Versionen und drei lokale Wiederherstellungskopien bleiben verfügbar; gespeicherter Volltext ist optional. Backups von Serverkonten werden in einem lokalen RSS-Konto wiederhergestellt.
+- Die Suche erfasst Titel, Zusammenfassungen, RSS-Inhalte und Offline-Volltext. Widgets öffnen das zugehörige Konto. Zugangsdaten werden mit Android Keystore verschlüsselt und nicht gesichert. HTTP muss je Server ausdrücklich erlaubt werden; eigene Zertifikate behalten die Hostnamenprüfung bei.
+
+Die neuen Dienstintegrationen sind experimentell. Automatische Tests prüfen Protokolle, Anmeldefehler, Seitennavigation und Statusänderungen; echte Konten müssen noch geprüft werden. Siehe [Prüfprotokoll](docs/improvement-plan.md). Der API-Zugang hängt auch vom Tarif und den Entwicklerrechten ab.
 
 ## Herunterladen
 
