@@ -3,7 +3,6 @@ package me.ash.reader.infrastructure.preference
 import android.content.Context
 import androidx.datastore.preferences.core.*
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
@@ -29,7 +28,7 @@ class WebDavConfigStore @Inject constructor(
         require(accountId > 0)
         val preferences = context.dataStore.edit { values ->
             if (values[textKey(accountId, "namespace")] == null) {
-                values[textKey(accountId, "namespace")] = UUID.randomUUID().toString()
+                values[textKey(accountId, "namespace")] = WebDavConfig.DEFAULT_NAMESPACE_ID
             }
             val migration = booleanPreferencesKey("webdav.accounts.migrated")
             val previousOwner = values[intPreferencesKey("legacy.settings.owner")] ?: values[intPreferencesKey(DataStoreKey.currentAccountId)]

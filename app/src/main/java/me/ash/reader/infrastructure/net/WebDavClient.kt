@@ -3,6 +3,7 @@ package me.ash.reader.infrastructure.net
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import android.content.Context
+import android.util.Xml
 import dagger.hilt.android.qualifiers.ApplicationContext
 import me.ash.reader.infrastructure.di.withServerTrust
 import okhttp3.Credentials
@@ -15,6 +16,7 @@ import okhttp3.Response
 import java.io.File
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import org.xmlpull.v1.XmlPullParser
 
 /**
  * Minimal WebDAV client built on OkHttp, providing the subset of methods
@@ -43,6 +45,64 @@ constructor(
 
     fun get(url: String, username: String?, password: String?): Response =
         execute(request(url, username, password) {})
+
+    /** Lists immediate child collections, used to discover backups made before directory pairing. */
+    fun collectionNames(url: String, username: String?, password: String?): List<String> {
+        val base = requireNotNull(url.toHttpUrlOrNull())
+        val parent = base.newBuilder().encodedPath(base.encodedPath.trimEnd('/') + "/").build()
+        return execute(request(parent.toString(), username, password) {
+            method("PROPFIND", """<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>"""
+                .toRequestBody("application/xml; charset=utf-8".toMediaType()))
+            header("Depth", "1")
+        }).use { response ->
+            if (response.code == 404) return@use emptyList()
+            check(response.isSuccessful) { "Could not discover WebDAV data: HTTP ${response.code}" }
+            val source = requireNotNull(response.body).source()
+            source.request(1_048_577)
+            check(source.buffer.size <= 1_048_576) { "WebDAV directory listing is too large" }
+            val parser = Xml.newPullParser().apply {
+                setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
+                setInput(source.inputStream(), null)
+            }
+            val names = linkedSetOf<String>()
+            var href: String? = null
+            var collection = false
+            var inPropstat = false
+            var propstatCollection = false
+            var propstatSuccessful = false
+            var multistatus = false
+            while (true) {
+                when (parser.nextToken()) {
+                    XmlPullParser.END_DOCUMENT -> break
+                    XmlPullParser.DOCDECL -> error("Invalid WebDAV directory listing")
+                    XmlPullParser.START_TAG -> if (parser.namespace == "DAV:") when (parser.name) {
+                        "multistatus" -> multistatus = true
+                        "response" -> { href = null; collection = false }
+                        "propstat" -> { inPropstat = true; propstatCollection = false; propstatSuccessful = false }
+                        "href" -> href = parser.nextText().trim()
+                        "collection" -> if (inPropstat) propstatCollection = true
+                        "status" -> if (inPropstat) propstatSuccessful = parser.nextText().trim().matches(Regex("HTTP/\\S+ 2[0-9]{2}(?: .*)?"))
+                    }
+                    XmlPullParser.END_TAG -> if (parser.namespace == "DAV:") when (parser.name) {
+                        "propstat" -> {
+                            if (propstatSuccessful && propstatCollection) collection = true
+                            inPropstat = false
+                        }
+                        "response" -> if (collection) {
+                            val child = href?.let(parent::resolve) ?: continue
+                            if (child.scheme == parent.scheme && child.host == parent.host && child.port == parent.port &&
+                                child.query == null && child.fragment == null &&
+                                child.encodedPath.trimEnd('/').substringBeforeLast('/') == parent.encodedPath.trimEnd('/')) {
+                                names += child.pathSegments.last { it.isNotEmpty() }
+                            }
+                        }
+                    }
+                }
+            }
+            check(multistatus) { "Invalid WebDAV directory listing" }
+            names.toList()
+        }
+    }
 
     /**
      * Puts [body] at [url], creating missing parent collections first.

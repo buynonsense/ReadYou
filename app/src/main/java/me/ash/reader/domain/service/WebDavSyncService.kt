@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineDispatcher
@@ -55,12 +54,16 @@ constructor(
         val password: String = "",
         val remotePath: String = DEFAULT_REMOTE_PATH,
         val autoSync: Boolean = false,
-        val namespaceId: String = UUID.randomUUID().toString(),
+        val namespaceId: String = DEFAULT_NAMESPACE_ID,
         val importLegacy: Boolean = false,
         val includeArticles: Boolean = false,
         val includeFullContent: Boolean = false,
     ) {
         val configured: Boolean get() = serverUrl.isNotBlank()
+
+        companion object {
+            const val DEFAULT_NAMESPACE_ID = "default"
+        }
 
         fun directoryUrl(includeNamespace: Boolean = true): String {
             require(namespaceId.matches(Regex("[A-Za-z0-9_-]{1,64}"))) { "Invalid remote account ID" }

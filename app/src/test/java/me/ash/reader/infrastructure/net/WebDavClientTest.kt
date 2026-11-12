@@ -10,6 +10,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -79,5 +80,30 @@ class WebDavClientTest {
                 "/dav/ReadYou/accounts/pair",
                 "/dav/ReadYou/accounts/pair/chunks",
             ))
+    }
+
+    @Test fun discoveryOnlyAcceptsImmediateCollectionsOnTheSameServer() {
+        val base = server.url("/dav/ReadYou/accounts/")
+        server.enqueue(MockResponse().setResponseCode(207).setBody("""
+            <multistatus xmlns="DAV:">
+                <response><href>/dav/ReadYou/accounts/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+                <response><href>old-id/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+                <response><href>${base}second/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+                <response><href>/dav/ReadYou/accounts/file.json</href><propstat><prop><resourcetype/></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+                <response><href>/dav/ReadYou/accounts/hidden/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 403 Forbidden</status></propstat><propstat><prop><displayname>Hidden</displayname></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+                <response><href>https://other.example/accounts/foreign/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+                <response><href>/dav/ReadYou/accounts/nested/child/</href><propstat><prop><resourcetype><collection/></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+            </multistatus>
+        """.trimIndent()))
+        assertEquals(listOf("old-id", "second"), client.collectionNames(base.toString(), null, null))
+        assertEquals("1", server.takeRequest().getHeader("Depth"))
+    }
+
+    @Test fun discoveryRejectsXmlDocumentDeclarations() {
+        server.enqueue(MockResponse().setResponseCode(207).setBody("""
+            <!DOCTYPE multistatus [<!ENTITY id "old-id">]>
+            <multistatus xmlns="DAV:"><response><href>&id;</href></response></multistatus>
+        """.trimIndent()))
+        assertTrue(runCatching { client.collectionNames(server.url("/accounts/").toString(), null, null) }.isFailure)
     }
 }

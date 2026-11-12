@@ -18,18 +18,38 @@ import me.ash.reader.infrastructure.net.WebDavClient
 
 internal data class DownloadedManifest(val manifest: BackupManifest, val etag: String?, val legacy: Boolean = false)
 
-internal class BackupTransport(private val client: WebDavClient, private val config: WebDavConfig, private val scope: BackupScope = BackupScope.BACKUP) {
-    val root: String = config.directoryUrl()
+internal class BackupTransport(private val client: WebDavClient, private var config: WebDavConfig, private val scope: BackupScope = BackupScope.BACKUP) {
+    val root: String get() = config.directoryUrl()
     private val manifestUrl get() = "$root/${scope.manifestFile}"
 
-    fun current(directory: File): DownloadedManifest? = readManifest(manifestUrl, directory)
-        ?: readManifest("$root/readyou-manifest-v2.json", directory)?.copy(legacy = true)
+    fun current(directory: File): DownloadedManifest? {
+        val current = currentAt(root, config.namespaceId, directory)
+        if (current != null) return current
+        val otherManifest = if (scope == BackupScope.SYNC) BackupScope.BACKUP.manifestFile else BackupScope.SYNC.manifestFile
+        if (readManifest("$root/$otherManifest", directory) != null) return null
+        // A directory represents one dataset. Reuse its only pre-existing namespace so
+        // a fresh installation can read old backups without asking for a pairing ID.
+        val names = client.collectionNames("${config.directoryUrl(includeNamespace = false)}/accounts", config.username, config.password)
+            .filter { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) && it != config.namespaceId }
+        val candidates = names.asSequence().filter { name ->
+            val candidateRoot = config.copy(namespaceId = name).directoryUrl()
+            currentAt(candidateRoot, name, directory) != null ||
+                readManifest("$candidateRoot/$otherManifest", directory, name) != null
+        }.take(2).toList()
+        check(candidates.size <= 1) { "This directory contains multiple old WebDAV datasets. Use a separate remote directory for each dataset." }
+        candidates.singleOrNull()?.let { config = config.copy(namespaceId = it) }
+        return currentAt(root, config.namespaceId, directory)
+    }
+
+    private fun currentAt(root: String, namespace: String, directory: File): DownloadedManifest? =
+        readManifest("$root/${scope.manifestFile}", directory, namespace)
+            ?: readManifest("$root/readyou-manifest-v2.json", directory, namespace)?.copy(legacy = true)
     fun version(reference: BackupReference, directory: File): DownloadedManifest {
         val downloaded = requireNotNull(readManifest("$root/snapshots/${reference.generation}.json", directory)) { "Historical backup was not found" }
         check(downloaded.manifest.checksum == reference.checksum) { "Historical manifest checksum mismatch" }
         return downloaded
     }
-    private fun readManifest(url: String, directory: File): DownloadedManifest? = client.get(url, config.username, config.password).use { response ->
+    private fun readManifest(url: String, directory: File, namespace: String = config.namespaceId): DownloadedManifest? = client.get(url, config.username, config.password).use { response ->
         if (response.code == 404) return@use null
         check(response.isSuccessful) { "WebDAV download failed: HTTP ${response.code}" }
         val file = File.createTempFile("manifest-", ".json", directory)
@@ -41,7 +61,7 @@ internal class BackupTransport(private val client: WebDavClient, private val con
             require(objectValue.has("version")) { "Missing WebDAV backup version" }
             require(objectValue["version"].asInt in 2..3) { "Unsupported WebDAV backup version: ${objectValue["version"]}" }
             val manifest = backupGson.fromJson(json, BackupManifest::class.java)
-            manifest.verify(config.namespaceId)
+            manifest.verify(namespace)
             DownloadedManifest(manifest, response.header("ETag"))
         } finally { file.delete() }
     }
@@ -118,10 +138,7 @@ internal class BackupTransport(private val client: WebDavClient, private val con
 
     suspend fun publish(workspace: BackupWorkspace, previous: DownloadedManifest?, chunks: List<BackupChunk>, includeArticles: Boolean = false, progress: (Int, Int) -> Unit): BackupManifest {
         val target = previous?.takeUnless { it.legacy }
-        val etag = target?.etag
-        require(target == null || (etag != null && etag.startsWith('"') && etag.endsWith('"') && !etag.startsWith("W/"))) {
-            "This WebDAV server does not provide a strong ETag. Safe concurrent publication is unavailable; the backup was preserved."
-        }
+        val etag = target?.etag?.takeIf(::isStrongEtag)
         val existing = previous?.manifest?.chunks?.map { it.hash }?.toSet().orEmpty()
         chunks.forEachIndexed { index, chunk ->
             currentCoroutineContext().ensureActive()
@@ -152,13 +169,23 @@ internal class BackupTransport(private val client: WebDavClient, private val con
             check(it.isSuccessful) { "Could not preserve the backup generation: HTTP ${it.code}" }
         }
         currentCoroutineContext().ensureActive()
-        // The small pointer is the only mutable remote object. Conditional PUT is an atomic CAS.
+        // Without a strong ETag these reads detect intervening changes, but cannot make
+        // the PUT atomic. Immutable snapshots remain available if a collision occurs.
+        if (etag == null && readManifest(manifestUrl, workspace.directory)?.manifest?.checksum != target?.manifest?.checksum) {
+            throw BackupConcurrentWriteException()
+        }
         client.putConditional(manifestUrl, config.username, config.password, json, ifMatch = etag, ifAbsent = target == null).use {
             if (it.code == 412 || it.code == 409) throw BackupConcurrentWriteException()
             check(it.isSuccessful) { "WebDAV manifest publication failed: HTTP ${it.code}" }
         }
+        if (etag == null && readManifest(manifestUrl, workspace.directory)?.manifest?.checksum != manifest.checksum) {
+            throw BackupConcurrentWriteException()
+        }
         return manifest
     }
+
+    private fun isStrongEtag(value: String): Boolean =
+        value.startsWith('"') && value.endsWith('"') && !value.startsWith("W/")
 
     private fun validate(record: BackupRecord, version: Int) {
         val kinds = if (version == 2) listOf("group", "feed", "article") else listOf("group", "feed", "article", "state", "setting")

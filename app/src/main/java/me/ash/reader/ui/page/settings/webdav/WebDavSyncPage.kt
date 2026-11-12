@@ -86,9 +86,6 @@ fun WebDavSyncPage(viewModel: WebDavSyncViewModel, onBack: () -> Unit) {
                     enabled = !state.isLoading, onClick = { edit("password", config.password) })
                 SettingItem(title = stringResource(R.string.webdav_remote_path), desc = config.remotePath, enabled = editable,
                     onClick = { edit("path", config.remotePath) })
-                SettingItem(title = stringResource(R.string.webdav_account_id), desc = config.namespaceId, enabled = editable,
-                    onClick = { edit("namespace", config.namespaceId) })
-                Tips(text = stringResource(R.string.webdav_account_id_desc))
                 ServerSecuritySettings(config.serverUrl)
                 SettingItem(title = stringResource(R.string.webdav_test), enabled = connected, onClick = viewModel::testConnection)
                 Spacer(Modifier.height(24.dp))
@@ -155,7 +152,7 @@ fun WebDavSyncPage(viewModel: WebDavSyncViewModel, onBack: () -> Unit) {
             "username" -> R.string.username
             "password" -> R.string.password
             "path" -> R.string.webdav_remote_path
-            else -> R.string.webdav_account_id
+            else -> R.string.webdav_remote_path
         })
         TextFieldDialog(visible = true, title = title, value = editingValue, isPassword = field == "password",
             onValueChange = { editingValue = it }, onDismissRequest = { editingField = null }, onConfirm = { value ->
@@ -165,7 +162,7 @@ fun WebDavSyncPage(viewModel: WebDavSyncViewModel, onBack: () -> Unit) {
                     "username" -> config.copy(username = value)
                     "password" -> config.copy(password = value)
                     "path" -> config.copy(remotePath = value)
-                    else -> config.copy(namespaceId = value.trim(), importLegacy = false)
+                    else -> config
                 })
                 editingField = null
             })

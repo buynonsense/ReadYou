@@ -31,16 +31,31 @@ class WebDavConfigStoreTest {
         Unit
     }
 
-    @Test fun accountsHaveIndependentConfigurationAndRemoteIdentities() = runBlocking {
+    @Test fun newConfigurationsUseTheSameDirectoryWithoutAPairingId() = runBlocking {
         val first = store.load(1)
         store.save(1, first.copy(serverUrl = "https://example.org/dav", username = "one", password = "test", autoSync = true))
         val second = store.load(2)
         assertFalse(second.configured)
         assertFalse(second.autoSync)
-        assertNotEquals(first.namespaceId, second.namespaceId)
+        assertEquals(first.namespaceId, second.namespaceId)
+        assertEquals(
+            first.copy(serverUrl = "https://example.org/dav").directoryUrl(),
+            second.copy(serverUrl = "https://example.org/dav").directoryUrl(),
+        )
         assertEquals("test", store.load(1).password)
         assertEquals(first.namespaceId, store.load(1).namespaceId)
         assertFalse(context.fromDataStoreToJSONString().contains("encrypted:test"))
+    }
+
+    @Test fun upgradePreservesThePreviousRemoteDirectory() = runBlocking {
+        context.dataStore.edit {
+            it[stringPreferencesKey("webdav.1.namespace")] = "previous-device-id"
+            it[stringPreferencesKey("webdav.1.url")] = "https://example.org/dav"
+        }
+        val config = store.load(1)
+        assertEquals("previous-device-id", config.namespaceId)
+        store.save(1, config.copy(autoSync = true))
+        assertEquals(config.directoryUrl(), store.load(1).directoryUrl())
     }
 
     @Test fun legacyConfigIsClaimedByItsPreviousOwnerEvenWhenAnotherAccountLoadsFirst() = runBlocking {

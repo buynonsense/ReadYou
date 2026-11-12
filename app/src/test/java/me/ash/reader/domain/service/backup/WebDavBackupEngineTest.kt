@@ -51,6 +51,10 @@ class WebDavBackupEngineTest {
     private val manifestWrites = AtomicInteger()
     @Volatile private var raceOnManifest = false
     @Volatile private var onManifestPut: (() -> Unit)? = null
+    @Volatile private var omitManifestEtag = false
+    @Volatile private var manifestEtagTransform: (String) -> String = { it }
+    @Volatile private var onSnapshotPut: (() -> Unit)? = null
+    @Volatile private var afterManifestPut: (() -> Unit)? = null
     private val server = MockWebServer()
     private lateinit var db: AndroidDatabase
     private lateinit var cache: ReaderCacheHelper
@@ -67,7 +71,24 @@ class WebDavBackupEngineTest {
                 val path = request.requestUrl!!.encodedPath
                 val isManifest = path.endsWith("readyou-sync-v3.json") || path.endsWith("readyou-backup-v3.json")
                 when (request.method) {
-                    "GET" -> resources[path]?.let { MockResponse().setResponseCode(200).setHeader("ETag", it.etag).setBody(Buffer().write(it.bytes)) } ?: MockResponse().setResponseCode(404)
+                    "GET" -> resources[path]?.let {
+                        MockResponse().setResponseCode(200).apply {
+                            if (!isManifest || !omitManifestEtag) setHeader("ETag", if (isManifest) manifestEtagTransform(it.etag) else it.etag)
+                            setBody(Buffer().write(it.bytes))
+                        }
+                    } ?: MockResponse().setResponseCode(404)
+                    "PROPFIND" -> {
+                        val children = if (request.getHeader("Depth") == "1") resources.keys.mapNotNull { key ->
+                            key.removePrefix(path.trimEnd('/') + "/").takeIf { key.startsWith(path.trimEnd('/') + "/") }
+                                ?.substringBefore('/')?.let { path.trimEnd('/') + "/$it/" }
+                        }.distinct() else emptyList()
+                        if (children.isEmpty()) MockResponse().setResponseCode(404)
+                        else MockResponse().setResponseCode(207).setBody(
+                            "<d:multistatus xmlns:d=\"DAV:\">" + children.joinToString("") {
+                                "<d:response><d:href>$it</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                            } + "</d:multistatus>"
+                        )
+                    }
                     "MKCOL" -> MockResponse().setResponseCode(201)
                     "PUT" -> {
                         if (isManifest) onManifestPut?.also { onManifestPut = null }?.invoke()
@@ -84,6 +105,8 @@ class WebDavBackupEngineTest {
                             resources[path] = resource
                             if (path.contains("/chunks/")) chunkWrites.incrementAndGet()
                             if (isManifest) manifestWrites.incrementAndGet()
+                            if (path.contains("/snapshots/")) onSnapshotPut?.also { onSnapshotPut = null }?.invoke()
+                            if (isManifest) afterManifestPut?.also { afterManifestPut = null }?.invoke()
                             MockResponse().setResponseCode(201).setHeader("ETag", resource.etag)
                         }
                     }
@@ -304,6 +327,117 @@ class WebDavBackupEngineTest {
         onManifestPut = { runBlocking { context.dataStore.edit { it[fontSize] = 22 } } }
         assertTrue(runCatching { sync() }.isFailure)
         assertEquals(22, context.dataStore.data.first()[fontSize])
+    }
+
+    @Test fun backupPublishesWhenServerOmitsManifestEtag(): Unit = runBlocking {
+        backup()
+        omitManifestEtag = true
+        db.articleDao().insert(article.copy(title = "Updated"))
+
+        backup()
+
+        assertEquals(2, engine.versions(1, config).size)
+        restore(2)
+        assertEquals("Updated", articleFor(2).title)
+    }
+
+    @Test fun weakAndUnquotedEtagsDoNotBlockBackups(): Unit = runBlocking {
+        backup()
+        manifestEtagTransform = { "W/$it" }
+        backup()
+        manifestEtagTransform = { it.trim('"') }
+        db.articleDao().insert(article.copy(title = "Unquoted ETag"))
+        backup()
+        restore(2)
+        assertEquals("Unquoted ETag", articleFor(2).title)
+        assertEquals(3, engine.versions(1, config).size)
+    }
+
+    @Test fun syncWithoutEtagsStillSharesReadingStates(): Unit = runBlocking {
+        omitManifestEtag = true
+        sync()
+        db.articleDao().markAsReadByArticleId(1, article.id, false)
+        sync()
+        sync(2)
+        assertFalse(db.articleDao().queryWebDavStates(2).single().isUnread)
+        assertFalse(remoteRecords(BackupScope.SYNC).any { it.kind == "article" })
+    }
+
+    @Test fun missingEtagDoesNotOverwriteChangesDetectedBeforePublication(): Unit = runBlocking {
+        backup()
+        val path = resources.keys.single { it.endsWith(BackupScope.BACKUP.manifestFile) }
+        val original = resources.getValue(path)
+        db.articleDao().insert(article.copy(title = "Second"))
+        backup()
+        omitManifestEtag = true
+        onSnapshotPut = { resources[path] = original }
+        val before = manifestWrites.get()
+
+        val failure = runCatching { backup() }.exceptionOrNull()
+
+        assertTrue(failure.toString(), failure is BackupConcurrentWriteException)
+        assertEquals(before, manifestWrites.get())
+        assertEquals(original, resources[path])
+    }
+
+    @Test fun missingEtagDetectsAConcurrentOverwriteBeforeApplyingLocally(): Unit = runBlocking {
+        omitManifestEtag = true
+        sync()
+        val path = resources.keys.single { it.endsWith(BackupScope.SYNC.manifestFile) }
+        val original = resources.getValue(path)
+        db.articleDao().markAsReadByArticleId(1, article.id, false)
+        afterManifestPut = { resources[path] = original }
+
+        val failure = runCatching { sync() }.exceptionOrNull()
+
+        assertTrue(failure.toString(), failure is BackupConcurrentWriteException)
+        assertFalse(articleFor(1).isUnread)
+        assertEquals(original, resources[path])
+    }
+
+    @Test fun freshDeviceFindsTheOnlyExistingDatasetWithoutPairingId(): Unit = runBlocking {
+        backup()
+        backup()
+        val accountsPath = java.net.URI(config.directoryUrl(includeNamespace = false)).rawPath + "/accounts"
+        resources["$accountsPath/unused/unrelated.txt"] = Resource(byteArrayOf(), "\"unused\"")
+        val freshConfig = config.copy(namespaceId = "default")
+        engine.restore(2, freshConfig, RestoreMode.REPLACE, ConflictResolution.ASK, null) { null }
+        assertEquals("Original", articleFor(2).title)
+        engine.sync(2, freshConfig, ConflictResolution.ASK) { null }
+        assertFalse(resources.keys.any { it.contains("/accounts/default/") })
+        assertEquals(2, engine.versions(2, freshConfig).size)
+    }
+
+    @Test fun multipleOldDatasetsAreNotSilentlyMixed(): Unit = runBlocking {
+        backup()
+        val first = resources.entries.single { it.key.endsWith(BackupScope.BACKUP.manifestFile) }.value
+        val another = backupGson.fromJson(first.bytes.decodeToString(), BackupManifest::class.java)
+            .copy(namespaceId = "another").signed()
+        val path = java.net.URI(config.copy(namespaceId = "another").directoryUrl()).rawPath
+        resources["$path/${BackupScope.BACKUP.manifestFile}"] = Resource(backupGson.toJson(another).toByteArray(), "\"another\"")
+        val before = manifestWrites.get()
+        val failure = runCatching {
+            engine.sync(2, config.copy(namespaceId = "default"), ConflictResolution.ASK) { null }
+        }.exceptionOrNull()
+        assertTrue(failure.toString(), failure?.message?.contains("multiple", ignoreCase = true) == true)
+        assertEquals(before, manifestWrites.get())
+        assertTrue(db.feedDao().queryAll(2).isEmpty())
+    }
+
+    @Test fun unusedOldPairingIdFindsTheExistingDataset(): Unit = runBlocking {
+        backup()
+        val unusedConfig = config.copy(namespaceId = "previously-unused-id")
+        engine.restore(2, unusedConfig, RestoreMode.REPLACE, ConflictResolution.ASK, null) { null }
+        assertEquals("Original", articleFor(2).title)
+        assertFalse(resources.keys.any { it.contains("/accounts/previously-unused-id/") })
+    }
+
+    @Test fun twoNewDevicesShareTheDefaultDirectoryWithoutAPairingId(): Unit = runBlocking {
+        engine.sync(1, WebDavConfig(serverUrl = config.serverUrl), ConflictResolution.ASK) { null }
+        engine.sync(2, WebDavConfig(serverUrl = config.serverUrl), ConflictResolution.ASK) { null }
+        assertEquals("https://example.org/rss", db.feedDao().queryAll(2).single().url)
+        assertTrue(resources.keys.all { it.contains("/accounts/default/") })
+        assertTrue(db.articleDao().queryStateMetadata(2).isEmpty())
     }
 
     @Test fun cacheCleanupKeepsOtherDevicesArticlesAndReadingStates() = runBlocking {
