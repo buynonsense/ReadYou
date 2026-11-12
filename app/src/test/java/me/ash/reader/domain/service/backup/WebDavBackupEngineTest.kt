@@ -1,6 +1,7 @@
 package me.ash.reader.domain.service.backup
 
 import android.app.Application
+import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -12,19 +13,32 @@ import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
+import me.ash.reader.domain.data.DiffMapHolder
+import me.ash.reader.domain.model.account.Account
+import me.ash.reader.domain.model.account.AccountType
 import me.ash.reader.domain.model.article.Article
 import me.ash.reader.domain.model.article.ArticleLinkMeta
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.model.group.Group
 import me.ash.reader.domain.service.WebDavSyncService.WebDavConfig
+import me.ash.reader.domain.service.WebDavSyncService
+import me.ash.reader.domain.service.AccountOperationLock
+import me.ash.reader.domain.service.AccountService
 import me.ash.reader.infrastructure.db.AndroidDatabase
 import me.ash.reader.infrastructure.db.ARTICLE_SEARCH_CALLBACK
 import me.ash.reader.infrastructure.net.WebDavClient
+import me.ash.reader.infrastructure.preference.AccountSyncStatusStore
+import me.ash.reader.infrastructure.preference.WebDavConfigStore
 import me.ash.reader.infrastructure.rss.ReaderCacheHelper
 import me.ash.reader.ui.ext.getDefaultGroupId
 import me.ash.reader.ui.ext.dataStore
+import me.ash.reader.ui.page.settings.webdav.WebDavSyncViewModel
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -37,6 +51,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
@@ -128,6 +143,18 @@ class WebDavBackupEngineTest {
     private suspend fun restore(id: Int, mode: RestoreMode = RestoreMode.MERGE) = engine.restore(id, config, mode, ConflictResolution.ASK, null) { null }
     private suspend fun articleFor(id: Int) = db.articleDao().queryStateMetadata(id).single().let { db.articleDao().queryById(it.id)!!.article }
 
+    private suspend fun syncService(autoSync: Boolean = true, accountLock: AccountOperationLock = AccountOperationLock()): WebDavSyncService {
+        val accountService = mock<AccountService>()
+        whenever(accountService.getAccountById(1)).thenReturn(Account(1, "Local", AccountType.Local))
+        val configStore = mock<WebDavConfigStore>()
+        whenever(configStore.load(1)).thenReturn(config.copy(autoSync = autoSync))
+        whenever(configStore.lastSyncTime(1)).thenReturn(0L)
+        val diffs = mock<DiffMapHolder>()
+        whenever(diffs.awaitPersistence()).thenReturn(Unit)
+        return WebDavSyncService(context, accountService, WebDavClient(OkHttpClient(), context),
+            configStore, accountLock, Dispatchers.Unconfined, engine, diffs, AccountSyncStatusStore(context))
+    }
+
     private fun remoteRecords(scope: BackupScope): List<BackupRecord> {
         val manifest = resources.entries.single { it.key.endsWith(scope.manifestFile) }.value.bytes
             .decodeToString().let { backupGson.fromJson(it, BackupManifest::class.java) }
@@ -137,6 +164,106 @@ class WebDavBackupEngineTest {
                 JsonParser.parseReader(reader).asJsonArray.map { backupGson.fromJson(it, BackupRecord::class.java) }
             }
         }
+    }
+
+    @Test fun manualSyncFollowedByAutoSyncDoesNotPublishUnchangedDataTwice(): Unit = runBlocking {
+        val service = syncService()
+        val model = WebDavSyncViewModel(service, Dispatchers.Unconfined, Dispatchers.Unconfined)
+        val store = ViewModelStore().apply { put("test", model) }
+        try {
+            model.initData(1)
+            withTimeout(10_000) { model.uiState.first { !it.isLoading } }
+            model.syncNow()
+            withTimeout(10_000) { model.uiState.first { !it.isLoading } }
+            assertNull(model.uiState.value.error)
+            assertEquals(1, engine.history(1).size)
+            assertEquals(1, manifestWrites.get())
+            service.autoSync(1)
+            val history = engine.history(1)
+            assertEquals("Duplicate sync generations: ${history.map { it.generation }}; uploads=${manifestWrites.get()}", 1, history.size)
+            assertEquals(1, manifestWrites.get())
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test fun autoSyncStillUploadsNewReadingStateAfterManualSync(): Unit = runBlocking {
+        val service = syncService()
+        service.syncNow(1).getOrThrow()
+        db.articleDao().markAsReadByArticleId(1, article.id, false)
+        service.autoSync(1)
+        assertEquals(2, manifestWrites.get())
+        assertEquals(listOf("auto-sync", "sync"), engine.history(1).map { it.action })
+        assertTrue(engine.history(1).all { it.success })
+        assertFalse(remoteRecords(BackupScope.SYNC).single { it.kind == "state" }.payload.bool("isUnread"))
+    }
+
+    @Test fun manualSyncAndQueuedAutoSyncDoNotPublishTheSameDataTwice(): Unit = runBlocking {
+        val accountLock = AccountOperationLock()
+        val service = syncService(accountLock = accountLock)
+        val model = WebDavSyncViewModel(service, Dispatchers.Unconfined, Dispatchers.Unconfined)
+        val store = ViewModelStore().apply { put("test", model) }
+        val locked = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val blocker = launch(Dispatchers.Unconfined) {
+            accountLock.withAccount(1) { locked.complete(Unit); release.await() }
+        }
+        try {
+            model.initData(1)
+            withTimeout(10_000) { model.uiState.first { !it.isLoading } }
+            locked.await()
+            model.syncNow()
+            val automatic = async(Dispatchers.Unconfined) { service.autoSync(1) }
+            release.complete(Unit)
+            withTimeout(10_000) {
+                model.uiState.first { !it.isLoading }
+                automatic.await()
+            }
+            assertNull(model.uiState.value.error)
+            assertEquals(1, engine.history(1).size)
+            assertEquals(1, manifestWrites.get())
+        } finally {
+            release.complete(Unit)
+            blocker.join()
+            store.clear()
+        }
+    }
+
+    @Test fun autoSyncStillAppliesRemoteReadingChanges(): Unit = runBlocking {
+        val service = syncService()
+        service.syncNow(1).getOrThrow()
+        sync(2)
+        val state = db.articleDao().queryWebDavStates(2).single()
+        db.articleDao().saveWebDavStates(listOf(state.copy(isUnread = false)))
+        sync(2)
+        service.autoSync(1)
+        assertFalse(articleFor(1).isUnread)
+        assertEquals(listOf("auto-sync", "sync"), engine.history(1).map { it.action })
+        assertTrue(engine.history(1).all { it.success })
+    }
+
+    @Test fun autoSyncRemainsDisabledWhenTheSettingIsOff(): Unit = runBlocking {
+        val service = syncService(autoSync = false)
+        service.syncNow(1).getOrThrow()
+        val requests = server.requestCount
+        service.autoSync(1)
+        assertEquals(requests, server.requestCount)
+        assertEquals(1, engine.history(1).size)
+        assertEquals(1, manifestWrites.get())
+    }
+
+    @Test fun autoSyncFailuresRemainVisibleInHistory(): Unit = runBlocking {
+        val service = syncService()
+        service.syncNow(1).getOrThrow()
+        db.articleDao().markAsReadByArticleId(1, article.id, false)
+        raceOnManifest = true
+        service.autoSync(1)
+        val history = engine.history(1)
+        assertEquals(2, history.size)
+        assertEquals("auto-sync", history.first().action)
+        assertFalse(history.first().success)
+        assertFalse(history.first().detail.isNullOrBlank())
+        assertTrue(history.last().success)
     }
 
     @Test fun dailySyncNeverUploadsArticleContentEvenWhenFullBackupIsEnabled(): Unit = runBlocking {

@@ -184,7 +184,10 @@ constructor(
      * Downloads the remote snapshot (if any), merges it into the local
      * account, then uploads the merged snapshot.
      */
-    suspend fun syncNow(accountId: Int, resolution: ConflictResolution = ConflictResolution.ASK): Result<WebDavSyncResult> = withContext(ioDispatcher) {
+    suspend fun syncNow(accountId: Int, resolution: ConflictResolution = ConflictResolution.ASK): Result<WebDavSyncResult> =
+        synchronize(accountId, resolution, automatic = false)
+
+    private suspend fun synchronize(accountId: Int, resolution: ConflictResolution, automatic: Boolean): Result<WebDavSyncResult> = withContext(ioDispatcher) {
         accountLock.withAccount(accountId) {
             runCatchingCancellable {
                 requireLocalAccount(accountId)
@@ -193,7 +196,7 @@ constructor(
                     context.getString(R.string.webdav_server_required_toast)
                 }
                 diffMapHolder.awaitPersistence()
-                val result = engine.sync(accountId, config, resolution) { downloadSnapshot(config) }
+                val result = engine.sync(accountId, config, resolution, automatic = automatic) { downloadSnapshot(config) }
                 setLastSyncTime(accountId, System.currentTimeMillis())
                 result
             }
@@ -252,7 +255,7 @@ constructor(
             runCatchingCancellable {
                 val config = loadConfig(accountId)
                 if (!config.autoSync || !config.configured) return
-                syncNow(accountId).getOrThrow()
+                synchronize(accountId, ConflictResolution.ASK, automatic = true).getOrThrow()
             }.getOrElse {
                 statusStore.webDavError(accountId, it.message ?: "WebDAV sync failed")
                 Log.e("RLog", "WebDavSyncService: auto sync failed", it)

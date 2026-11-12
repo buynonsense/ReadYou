@@ -99,6 +99,15 @@ class WebDavSyncViewModel @Inject constructor(
         }
     }
 
+    fun refreshLocalData() = launchOperation(requireConfiguration = false, resetFeedback = false) { target ->
+        val history = service.history(target)
+        val copies = service.recoveryCopies(target)
+        val time = service.lastSyncTime(target)
+        if (target == accountId) _uiState.update {
+            it.copy(history = history, recoveryCopies = copies, lastSyncTime = time)
+        }
+    }
+
     fun testConnection() = launchOperation { target ->
         val result = service.testConnection(_uiState.value.config)
         if (target == accountId) _uiState.update {
@@ -139,10 +148,13 @@ class WebDavSyncViewModel @Inject constructor(
         }
     }
 
-    private fun launchOperation(requireConfiguration: Boolean = true, block: suspend (Int) -> Unit) {
+    private fun launchOperation(requireConfiguration: Boolean = true, resetFeedback: Boolean = true, block: suspend (Int) -> Unit) {
         if (_uiState.value.isLoading || accountId <= 0 || requireConfiguration && !_uiState.value.configurationLoaded) return
         val target = accountId
-        _uiState.update { it.copy(isLoading = true, error = null, canRetry = false, conflict = null, connectionTestResult = null, completedAction = null, result = null) }
+        _uiState.update {
+            if (resetFeedback) it.copy(isLoading = true, error = null, canRetry = false, conflict = null, connectionTestResult = null, completedAction = null, result = null)
+            else it.copy(isLoading = true)
+        }
         operationJob = viewModelScope.launch(mainDispatcher) {
             try {
                 val result = withContext(ioDispatcher) { runCatchingCancellable { block(target) } }

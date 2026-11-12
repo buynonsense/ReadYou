@@ -34,10 +34,18 @@ class WebDavSyncViewModelTest {
             withTimeout(5_000) { model.uiState.first { !it.isLoading } }
             assertEquals(conflict, model.uiState.value.conflict)
             assertFalse(model.uiState.value.isLoading)
+            val pendingConflict = model.uiState.value
+            model.refreshLocalData()
+            withTimeout(5_000) { model.uiState.first { !it.isLoading } }
+            assertEquals(pendingConflict, model.uiState.value)
             model.resolveConflict(ConflictResolution.KEEP_REMOTE)
             withTimeout(5_000) { model.uiState.first { !it.isLoading } }
             assertNull(model.uiState.value.conflict)
             assertEquals(1, model.uiState.value.result!!.articlesUpdated)
+            val completedSync = model.uiState.value
+            model.refreshLocalData()
+            withTimeout(5_000) { model.uiState.first { !it.isLoading } }
+            assertEquals(completedSync, model.uiState.value)
             model.retry()
             withTimeout(5_000) { model.uiState.first { !it.isLoading } }
             verify(service, times(2)).syncNow(7, ConflictResolution.KEEP_REMOTE)

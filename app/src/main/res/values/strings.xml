@@ -417,6 +417,16 @@
 
     <!-- WebDAV sync -->
     <string name="webdav_sync">WebDAV sync</string>
+    <string name="webdav_connection_desc">Server, login and remote directory</string>
+    <string name="webdav_backup_navigation_desc">Backup options, upload and restore</string>
+    <string name="webdav_backup_options">Backup options</string>
+    <string name="webdav_backup_actions">Backup and restore</string>
+    <string name="webdav_versions_desc">View and restore retained remote backups</string>
+    <string name="webdav_restore_version">Restore this version</string>
+    <string name="webdav_recovery_navigation_desc">View the latest three local recovery copies</string>
+    <string name="webdav_no_recovery_copies">No local recovery copies yet</string>
+    <string name="webdav_history_retention">Keep only the latest %1$d operations</string>
+    <string name="webdav_history_empty">No operations yet</string>
     <string name="webdav_sync_section">Sync</string>
     <string name="webdav_remote_path">Remote directory</string>
     <string name="webdav_test">Test connection</string>
@@ -430,6 +440,7 @@
     <string name="webdav_restore">Restore from backup</string>
     <string name="webdav_restore_desc">Merge the remote backup into this device</string>
     <string name="webdav_auto_sync">Auto sync after RSS sync</string>
+    <string name="webdav_auto_sync_action">Auto sync</string>
     <string name="webdav_last_sync">Last sync</string>
     <string name="webdav_never_synced">Never</string>
     <string name="webdav_no_backup">No backup found on the server</string>

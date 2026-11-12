@@ -38,6 +38,10 @@ class WebDavBackupEngine @Inject constructor(
     private val client: WebDavClient,
     private val cache: ReaderCacheHelper,
 ) {
+    companion object {
+        const val HISTORY_LIMIT = 50
+    }
+
     private val storage = context.noBackupFilesDir.resolve("webdav-v2").apply { mkdirs() }
     private val operationLock = Mutex() // App preferences are shared by all accounts.
     private val _progress = MutableStateFlow<Map<Int, BackupProgress>>(emptyMap())
@@ -62,11 +66,11 @@ class WebDavBackupEngine @Inject constructor(
     fun history(id: Int): List<BackupHistoryEntry> {
         val file = storage.resolve("$id/history.json")
         if (!file.exists()) return emptyList()
-        return AtomicFile(file).openRead().reader().use { backupGson.fromJson(it, Array<BackupHistoryEntry>::class.java)?.toList() }.orEmpty()
+        return AtomicFile(file).openRead().reader().use { backupGson.fromJson(it, Array<BackupHistoryEntry>::class.java)?.toList() }.orEmpty().take(HISTORY_LIMIT)
     }
     private fun recordHistory(id: Int, entry: BackupHistoryEntry) {
         storage.resolve(id.toString()).mkdirs()
-        atomicJson(storage.resolve("$id/history.json"), (listOf(entry) + history(id)).take(50))
+        atomicJson(storage.resolve("$id/history.json"), (listOf(entry) + history(id)).take(HISTORY_LIMIT))
     }
 
     suspend fun versions(id: Int, config: WebDavConfig): List<BackupVersion> = withWorkspace { workspace ->
@@ -101,8 +105,9 @@ class WebDavBackupEngine @Inject constructor(
         }
     }
 
-    suspend fun sync(id: Int, config: WebDavConfig, resolution: ConflictResolution, legacy: suspend () -> WebDavSyncData?): WebDavSyncResult =
-        operation(id, "sync") {
+    suspend fun sync(id: Int, config: WebDavConfig, resolution: ConflictResolution, automatic: Boolean = false, legacy: suspend () -> WebDavSyncData?): WebDavSyncResult {
+        var recordSync = true
+        return operation(id, if (automatic) "auto-sync" else "sync", recordSuccess = { recordSync }) {
             withWorkspace { workspace ->
                 val syncConfig = config.copy(includeArticles = false, includeFullContent = false)
                 val baseline = metadata(id, config, BackupScope.SYNC).records.associateBy { it.key }
@@ -116,7 +121,16 @@ class WebDavBackupEngine @Inject constructor(
                 scan(id, syncConfig, workspace, "local", baseline)
                 merge(workspace, baseline, resolution)
                 normalizeParents(workspace, resolution)
-                if (workspace.differs("local", "merged")) preserveRecovery(id, config, baseline)
+                val localChanged = workspace.differs("local", "merged")
+                // A queued RSS sync can reach WebDAV just after a manual sync. Compare
+                // both datasets so suppressing that duplicate never hides real edits.
+                if (automatic && remote != null && !remote.legacy && remote.manifest.version == 3 &&
+                    !localChanged && !workspace.differs("remote", "merged")) {
+                    saveMetadata(id, config, stamps(workspace, "merged"), BackupScope.SYNC)
+                    recordSync = false
+                    return@withWorkspace WebDavSyncResult()
+                }
+                if (localChanged) preserveRecovery(id, config, baseline)
                 stage(id, "upload")
                 val chunks = transport.writeChunks(workspace, "merged")
                 val manifest = transport.publish(workspace, remote, chunks) { count, total -> stage(id, "upload", count, total) }
@@ -128,6 +142,7 @@ class WebDavBackupEngine @Inject constructor(
                 result
             }
         }
+    }
 
     suspend fun backup(id: Int, config: WebDavConfig, legacy: suspend () -> WebDavSyncData?) {
         operation(id, "backup") {
@@ -182,11 +197,13 @@ class WebDavBackupEngine @Inject constructor(
     }
 
     private val generations = java.util.concurrent.ConcurrentHashMap<Int, String>()
-    private suspend fun <T> operation(id: Int, action: String, block: suspend () -> T): T = operationLock.withLock {
+    private suspend fun <T> operation(id: Int, action: String, recordSuccess: () -> Boolean = { true }, block: suspend () -> T): T = operationLock.withLock {
         generations.remove(id)
         try {
             stage(id, "start")
-            block().also { recordHistory(id, BackupHistoryEntry(System.currentTimeMillis(), action, true, null, generations[id])) }
+            block().also {
+                if (recordSuccess()) recordHistory(id, BackupHistoryEntry(System.currentTimeMillis(), action, true, null, generations[id]))
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             recordHistory(id, BackupHistoryEntry(System.currentTimeMillis(), action, false, e.message?.take(1_024)))

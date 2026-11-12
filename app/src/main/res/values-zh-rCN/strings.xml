@@ -381,6 +381,16 @@
 
     <!-- WebDAV 同步 -->
     <string name="webdav_sync">WebDAV 同步</string>
+    <string name="webdav_connection_desc">服务器、登录信息与远程目录</string>
+    <string name="webdav_backup_navigation_desc">备份范围、上传与恢复</string>
+    <string name="webdav_backup_options">备份范围</string>
+    <string name="webdav_backup_actions">备份与恢复</string>
+    <string name="webdav_versions_desc">查看并恢复保留的远程备份</string>
+    <string name="webdav_restore_version">恢复此版本</string>
+    <string name="webdav_recovery_navigation_desc">查看最近三份本地恢复副本</string>
+    <string name="webdav_no_recovery_copies">暂无本地恢复副本</string>
+    <string name="webdav_history_retention">仅保留最近 %1$d 条操作记录</string>
+    <string name="webdav_history_empty">暂无操作记录</string>
     <string name="webdav_sync_section">同步</string>
     <string name="webdav_remote_path">远程目录</string>
     <string name="webdav_test">测试连接</string>
@@ -394,6 +404,7 @@
     <string name="webdav_restore">从备份恢复</string>
     <string name="webdav_restore_desc">将远程备份合并到本机</string>
     <string name="webdav_auto_sync">RSS 同步后自动同步</string>
+    <string name="webdav_auto_sync_action">自动同步</string>
     <string name="webdav_last_sync">上次同步</string>
     <string name="webdav_never_synced">从未同步</string>
     <string name="webdav_no_backup">服务器上没有找到备份</string>
