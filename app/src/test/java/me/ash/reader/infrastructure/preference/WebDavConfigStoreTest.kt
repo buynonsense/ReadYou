@@ -67,4 +67,16 @@ class WebDavConfigStoreTest {
         assertTrue(runCatching { store.load(1) }.isFailure)
         assertEquals("legacy encrypted value", context.dataStore.data.first()[stringPreferencesKey(DataStoreKey.webdavPassword)])
     }
+
+    @Test fun articleBackupDefaultsOffEvenWhenOldFullTextBackupWasEnabled() = runBlocking {
+        context.dataStore.edit { it[booleanPreferencesKey("webdav.1.fullContent")] = true }
+        val original = store.load(1)
+        assertFalse(original.includeArticles)
+        assertTrue(original.includeFullContent)
+        store.save(1, original.copy(includeArticles = true))
+        assertTrue(store.load(1).includeArticles)
+        assertFalse(store.load(2).includeArticles)
+        store.save(1, original.copy(includeArticles = false))
+        assertFalse(store.load(1).includeArticles)
+    }
 }

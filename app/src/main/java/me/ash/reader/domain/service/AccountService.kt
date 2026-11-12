@@ -194,6 +194,7 @@ constructor(
         accountDao.queryById(accountId)?.let {
             database.withTransaction {
                 articleDao.deleteByAccountId(accountId)
+                articleDao.deleteWebDavStates(accountId)
                 feedDao.deleteByAccountId(accountId)
                 groupDao.deleteByAccountId(accountId)
                 accountDao.delete(it)

@@ -10,6 +10,7 @@ import me.ash.reader.domain.model.article.ArchivedArticle
 import me.ash.reader.domain.model.article.Article
 import me.ash.reader.domain.model.article.ArticleSearch
 import me.ash.reader.domain.model.article.PendingArticleState
+import me.ash.reader.domain.model.article.WebDavArticleState
 import me.ash.reader.domain.repository.PendingArticleStateDao
 import me.ash.reader.domain.repository.ArticleSearchDao
 import me.ash.reader.domain.model.feed.Feed
@@ -23,8 +24,8 @@ import me.ash.reader.ui.ext.toInt
 import java.util.*
 
 @Database(
-    entities = [Account::class, Feed::class, Article::class, Group::class, ArchivedArticle::class, ArticleSearch::class, PendingArticleState::class],
-    version = 10,
+    entities = [Account::class, Feed::class, Article::class, Group::class, ArchivedArticle::class, ArticleSearch::class, PendingArticleState::class, WebDavArticleState::class],
+    version = 11,
     autoMigrations = [
         AutoMigration(from = 5, to = 6),
         AutoMigration(from = 5, to = 7),
@@ -89,7 +90,18 @@ val allMigrations = arrayOf(
     MIGRATION_7_8,
     MIGRATION_8_9,
     MIGRATION_9_10,
+    MIGRATION_10_11,
 )
+
+object MIGRATION_10_11 : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS webdav_article_state (
+            accountId INTEGER NOT NULL, feedUrl TEXT NOT NULL, link TEXT NOT NULL,
+            isUnread INTEGER NOT NULL, isStarred INTEGER NOT NULL, isReadLater INTEGER NOT NULL,
+            PRIMARY KEY(accountId, feedUrl, link)
+        )""")
+    }
+}
 
 object MIGRATION_9_10 : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {

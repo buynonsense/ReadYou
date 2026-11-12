@@ -39,8 +39,12 @@ internal class BackupWorkspace(val directory: File) : Closeable {
             while (cursor.moveToNext()) yield(cursor.getString(0))
         }
     }
+    fun keys(table: String, kind: String): List<String> = database.rawQuery(
+        "SELECT recordKey FROM ${table(table)} WHERE kind = ? ORDER BY recordKey", arrayOf(kind),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
     fun count(table: String): Int = database.rawQuery("SELECT COUNT(*) FROM ${table(table)}", null).use { it.moveToFirst(); it.getInt(0) }
     fun copy(from: String, to: String) { database.execSQL("INSERT OR REPLACE INTO ${table(to)} SELECT * FROM ${table(from)}") }
+    fun remove(table: String, key: String) { database.delete(table(table), "recordKey = ?", arrayOf(key)) }
     fun unchanged(): Boolean = !differs("local", "fresh")
     fun differs(first: String, second: String): Boolean = database.rawQuery("""SELECT
         EXISTS(SELECT recordKey, hash FROM ${table(first)} EXCEPT SELECT recordKey, hash FROM ${table(second)})

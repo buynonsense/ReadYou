@@ -14,9 +14,12 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.ash.reader.R
 import me.ash.reader.domain.model.article.ArchivedArticle
 import me.ash.reader.domain.model.article.Article
+import me.ash.reader.domain.model.article.WebDavArticleState
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.model.group.Group
 import me.ash.reader.domain.service.WebDavSyncService.WebDavConfig
@@ -36,18 +39,19 @@ class WebDavBackupEngine @Inject constructor(
     private val cache: ReaderCacheHelper,
 ) {
     private val storage = context.noBackupFilesDir.resolve("webdav-v2").apply { mkdirs() }
+    private val operationLock = Mutex() // App preferences are shared by all accounts.
     private val _progress = MutableStateFlow<Map<Int, BackupProgress>>(emptyMap())
     val progress = _progress.asStateFlow()
     private fun stage(id: Int, stage: String, count: Int = 0, total: Int = 0) { _progress.update { it + (id to BackupProgress(stage, count, total)) } }
 
     private fun stateDir(id: Int, config: WebDavConfig) = storage.resolve("$id/${digest("${config.serverUrl}/${config.remotePath}/${config.namespaceId}")}").apply { mkdirs() }
-    private fun metadata(id: Int, config: WebDavConfig): BackupMetadata {
-        val file = AtomicFile(stateDir(id, config).resolve("metadata.json"))
+    private fun metadata(id: Int, config: WebDavConfig, scope: BackupScope = BackupScope.BACKUP): BackupMetadata {
+        val file = AtomicFile(stateDir(id, config).resolve("metadata-${scope.id}-v3.json"))
         if (!file.baseFile.exists()) return BackupMetadata()
         return file.openRead().reader().use { backupGson.fromJson(it, BackupMetadata::class.java) }
             ?: throw IllegalStateException("Local WebDAV sync metadata is damaged")
     }
-    private fun saveMetadata(id: Int, config: WebDavConfig, stamps: List<RecordStamp>) = atomicJson(stateDir(id, config).resolve("metadata.json"), BackupMetadata(stamps))
+    private fun saveMetadata(id: Int, config: WebDavConfig, stamps: List<RecordStamp>, scope: BackupScope = BackupScope.BACKUP) = atomicJson(stateDir(id, config).resolve("metadata-${scope.id}-v3.json"), BackupMetadata(stamps))
     private fun atomicJson(file: File, value: Any) {
         val atomic = AtomicFile(file)
         val output = atomic.startWrite()
@@ -84,29 +88,32 @@ class WebDavBackupEngine @Inject constructor(
             val directory = storage.resolve("$id/recovery/$recoveryId")
             val manifest = directory.resolve("manifest.json").reader().use { backupGson.fromJson(it, BackupManifest::class.java) }
             manifest.verify(manifest.namespaceId)
-            val recoveryConfig = config.copy(namespaceId = manifest.namespaceId, serverUrl = config.serverUrl.ifBlank { "https://localhost" })
+            val recoveryConfig = config.copy(namespaceId = manifest.namespaceId, serverUrl = config.serverUrl.ifBlank { "https://localhost" }, includeArticles = true, includeFullContent = true)
             BackupTransport(client, recoveryConfig).download(manifest, workspace, directory) { count, total -> stage(id, "download", count, total) }
+            prepareRemote(workspace, manifest.version, includeArticles = true)
             val baseline = metadata(id, config).records.associateBy { it.key }
-            scan(id, config, workspace, "local", baseline)
+            scan(id, recoveryConfig, workspace, "local", baseline)
             workspace.copy("remote", "merged")
             normalizeParents(workspace, ConflictResolution.KEEP_REMOTE)
             preserveRecovery(id, config, baseline)
             stage(id, "apply")
-            apply(id, config, workspace, baseline, replace = true).also { saveRestoredBindings(id, config, workspace, baseline) }
+            apply(id, recoveryConfig, workspace, baseline, replace = true).also { saveRestoredBindings(id, config, workspace, baseline) }
         }
     }
 
     suspend fun sync(id: Int, config: WebDavConfig, resolution: ConflictResolution, legacy: suspend () -> WebDavSyncData?): WebDavSyncResult =
         operation(id, "sync") {
             withWorkspace { workspace ->
-                val baseline = metadata(id, config).records.associateBy { it.key }
+                val syncConfig = config.copy(includeArticles = false, includeFullContent = false)
+                val baseline = metadata(id, config, BackupScope.SYNC).records.associateBy { it.key }
                 stage(id, "download")
-                val transport = BackupTransport(client, config)
+                val transport = BackupTransport(client, config, BackupScope.SYNC)
                 val remote = transport.current(workspace.directory)
                 if (remote != null) transport.download(remote.manifest, workspace) { count, total -> stage(id, "download", count, total) }
                 else legacy()?.let { importLegacy(it, workspace) }
+                prepareRemote(workspace, remote?.manifest?.version ?: 2, includeArticles = false)
                 stage(id, "scan")
-                scan(id, config, workspace, "local", baseline)
+                scan(id, syncConfig, workspace, "local", baseline)
                 merge(workspace, baseline, resolution)
                 normalizeParents(workspace, resolution)
                 if (workspace.differs("local", "merged")) preserveRecovery(id, config, baseline)
@@ -115,8 +122,8 @@ class WebDavBackupEngine @Inject constructor(
                 val manifest = transport.publish(workspace, remote, chunks) { count, total -> stage(id, "upload", count, total) }
                 // A concurrent local edit leaves the published snapshot valid, but is never overwritten.
                 stage(id, "apply")
-                val result = apply(id, config, workspace, baseline, replace = false)
-                saveMetadata(id, config, stamps(workspace, "merged"))
+                val result = apply(id, syncConfig, workspace, baseline, replace = false)
+                saveMetadata(id, config, stamps(workspace, "merged"), BackupScope.SYNC)
                 generations[id] = manifest.generation
                 result
             }
@@ -134,7 +141,7 @@ class WebDavBackupEngine @Inject constructor(
                 scan(id, config, workspace, "local", baseline)
                 workspace.copy("local", "merged")
                 val chunks = transport.writeChunks(workspace, "merged")
-                val manifest = transport.publish(workspace, remote, chunks) { count, total -> stage(id, "upload", count, total) }
+                val manifest = transport.publish(workspace, remote, chunks, includeArticles = config.includeArticles) { count, total -> stage(id, "upload", count, total) }
                 saveMetadata(id, config, stamps(workspace, "local"))
                 generations[id] = manifest.generation
             }
@@ -153,12 +160,14 @@ class WebDavBackupEngine @Inject constructor(
                 } else current
                 if (selected != null) transport.download(selected.manifest, workspace) { count, total -> stage(id, "download", count, total) }
                 else importLegacy(requireNotNull(legacy()) { context.getString(R.string.webdav_no_backup) }, workspace)
-                scan(id, config, workspace, "local", baseline)
+                prepareRemote(workspace, selected?.manifest?.version ?: 2, includeArticles = true)
+                val restoreConfig = config.copy(includeArticles = selected?.manifest?.includesArticles ?: true)
+                scan(id, restoreConfig, workspace, "local", baseline)
                 if (mode == RestoreMode.REPLACE) workspace.copy("remote", "merged") else merge(workspace, baseline, resolution)
                 normalizeParents(workspace, resolution)
                 preserveRecovery(id, config, baseline)
                 stage(id, "apply")
-                val result = apply(id, config, workspace, baseline, mode == RestoreMode.REPLACE)
+                val result = apply(id, restoreConfig, workspace, baseline, mode == RestoreMode.REPLACE)
                 saveRestoredBindings(id, config, workspace, baseline)
                 selected?.manifest?.generation?.let { generations[id] = it }
                 result
@@ -173,9 +182,9 @@ class WebDavBackupEngine @Inject constructor(
     }
 
     private val generations = java.util.concurrent.ConcurrentHashMap<Int, String>()
-    private suspend fun <T> operation(id: Int, action: String, block: suspend () -> T): T {
+    private suspend fun <T> operation(id: Int, action: String, block: suspend () -> T): T = operationLock.withLock {
         generations.remove(id)
-        return try {
+        try {
             stage(id, "start")
             block().also { recordHistory(id, BackupHistoryEntry(System.currentTimeMillis(), action, true, null, generations[id])) }
         } catch (e: Exception) {
@@ -217,7 +226,13 @@ class WebDavBackupEngine @Inject constructor(
                     "groupKey" to (groupKeys[feed.groupId] ?: key("group", "default")), "isNotification" to feed.isNotification,
                     "isFullContent" to feed.isFullContent, "isBrowser" to feed.isBrowser), now, localId = feed.id))
             }
-            database.openHelper.readableDatabase.query("SELECT * FROM article WHERE accountId = ? ORDER BY date, id", arrayOf(id)).use { cursor ->
+            val feedUrls = feeds.map { it.url }.toSet()
+            database.articleDao().queryWebDavStates(id).filter { it.feedUrl in feedUrls }.forEach { state ->
+                add(stateRecord(state, now))
+            }
+            // Daily sync never reads article bodies, even when manual content backup is enabled.
+            val columnsToRead = if (config.includeArticles) "*" else "id, feedId, link, isUnread, isStarred, isReadLater"
+            database.openHelper.readableDatabase.query("SELECT $columnsToRead FROM article WHERE accountId = ? ORDER BY id", arrayOf(id)).use { cursor ->
                 val columns = cursor.columnNames.withIndex().associate { it.value to it.index }
                 fun text(name: String): String? = columns[name]?.let { if (cursor.isNull(it)) null else cursor.getString(it) }
                 while (cursor.moveToNext()) {
@@ -225,16 +240,18 @@ class WebDavBackupEngine @Inject constructor(
                     val articleId = requireNotNull(text("id"))
                     val feed = feedsById[text("feedId")] ?: continue
                     val link = text("link").orEmpty()
+                    val state = WebDavArticleState(id, feed.url, link, text("isUnread") == "1", text("isStarred") == "1", text("isReadLater") == "1")
+                    add(stateRecord(state, now).copy(localId = articleId))
+                    if (!config.includeArticles) continue
                     val body = payload("feedKey" to key("feed", feed.url), "feedUrl" to feed.url, "link" to link,
                         "title" to text("title"), "author" to text("author"), "date" to text("date")?.toLongOrNull(),
                         "updateAt" to text("updateAt")?.toLongOrNull(), "rawDescription" to text("rawDescription"),
-                        "shortDescription" to text("shortDescription"), "img" to text("img"), "isUnread" to (text("isUnread") == "1"),
-                        "isStarred" to (text("isStarred") == "1"), "isReadLater" to (text("isReadLater") == "1"))
+                        "shortDescription" to text("shortDescription"), "img" to text("img"))
                     if (config.includeFullContent) cache.peekFullContent(id, articleId)?.let { body.addProperty("cachedBody", it) }
                     add(BackupRecord(key("article", "${feed.url}\u0000$link"), "article", body, now, localId = articleId))
                 }
             }
-            database.openHelper.readableDatabase.query("SELECT a.feedId, a.link, a.archivedAt FROM archived_article a JOIN feed f ON f.id = a.feedId WHERE f.accountId = ?", arrayOf(id)).use { cursor ->
+            if (config.includeArticles) database.openHelper.readableDatabase.query("SELECT a.feedId, a.link, a.archivedAt FROM archived_article a JOIN feed f ON f.id = a.feedId WHERE f.accountId = ?", arrayOf(id)).use { cursor ->
                 while (cursor.moveToNext()) {
                     val feed = feedsById[cursor.getString(0)] ?: continue
                     val link = cursor.getString(1)
@@ -244,8 +261,34 @@ class WebDavBackupEngine @Inject constructor(
                 }
             }
         }
-        baseline.values.filter { it.key !in seen }.forEach { stamp ->
-            add(BackupRecord(stamp.key, stamp.kind, stamp.identity, if (stamp.deleted) stamp.modifiedAt else now, deleted = true, localId = stamp.localId))
+        WebDavSettings.scan(context, now).forEach(::add)
+        baseline.values.filter { it.key !in seen && it.kind != "setting" && (it.kind != "article" || config.includeArticles) }.forEach { stamp ->
+            // Cache eviction is local. A missing article is not a deletion of its reading state.
+            val keepState = stamp.kind == "state" && !stamp.deleted && workspace.get(table, stamp.identity.string("feedKey").orEmpty())?.deleted == false
+            add(BackupRecord(stamp.key, stamp.kind, stamp.identity, if (stamp.deleted || keepState) stamp.modifiedAt else now, deleted = !keepState, localId = if (keepState) null else stamp.localId))
+        }
+    }
+
+    private fun stateRecord(state: WebDavArticleState, time: Long) = BackupRecord(
+        key("state", "${state.feedUrl}\u0000${state.link}"), "state",
+        payload("feedKey" to key("feed", state.feedUrl), "feedUrl" to state.feedUrl, "link" to state.link,
+            "isUnread" to state.isUnread, "isStarred" to state.isStarred, "isReadLater" to state.isReadLater), time,
+    )
+
+    /** V1/V2 article records become lightweight states; content is retained only for explicit restores. */
+    private fun prepareRemote(workspace: BackupWorkspace, version: Int, includeArticles: Boolean) {
+        for (recordKey in workspace.keys("remote", "article")) {
+            val article = requireNotNull(workspace.get("remote", recordKey))
+            if (version < 3) {
+                val body = article.payload
+                val state = stateRecord(WebDavArticleState(0, body.string("feedUrl").orEmpty(), body.string("link").orEmpty(),
+                    body.bool("isUnread", true), body.bool("isStarred"), body.bool("isReadLater")), article.modifiedAt)
+                // Old cleanup tombstones describe cached content, not cross-device state deletions.
+                if (!article.deleted) workspace.put("remote", state)
+                val content = body.deepCopy().apply { remove("isUnread"); remove("isStarred"); remove("isReadLater") }
+                workspace.put("remote", article.copy(payload = content, hash = recordHash("article", article.deleted, content)))
+            }
+            if (!includeArticles) workspace.remove("remote", article.key)
         }
     }
 
@@ -260,6 +303,11 @@ class WebDavBackupEngine @Inject constructor(
                 local == null -> remote
                 remote == null -> local
                 local.hash == remote.hash -> if (remote.payload.has("cachedBody") && !local.payload.has("cachedBody")) remote.copy(localId = local.localId) else local
+                // A fresh installation's unset preference does not conflict with an existing choice.
+                common == null && local.kind == "setting" && !local.payload.has("value") -> remote
+                common == null && remote.kind == "setting" && !remote.payload.has("value") -> local
+                common == null && local.kind == "state" && isInitialState(local) -> remote.copy(localId = local.localId)
+                common == null && remote.kind == "state" && isInitialState(remote) -> local
                 local.hash == common?.hash -> remote.copy(localId = local.localId)
                 remote.hash == common?.hash -> local
                 else -> {
@@ -276,16 +324,20 @@ class WebDavBackupEngine @Inject constructor(
         }
         if (total > 0 && resolution == ConflictResolution.ASK) throw BackupConflictException(conflicts, total)
     }
+
+    private fun isInitialState(record: BackupRecord) = !record.deleted && record.payload.bool("isUnread", true) &&
+        !record.payload.bool("isStarred") && !record.payload.bool("isReadLater")
     private fun conflict(local: BackupRecord, remote: BackupRecord): BackupConflict {
         fun summary(record: BackupRecord) = if (record.deleted) context.getString(R.string.webdav_record_deleted) else when (record.kind) {
-            "article" -> context.getString(R.string.webdav_article_state_summary,
+            "state" -> context.getString(R.string.webdav_article_state_summary,
                 context.getString(if (record.payload.bool("isUnread")) R.string.enabled else R.string.disabled),
                 context.getString(if (record.payload.bool("isStarred")) R.string.enabled else R.string.disabled),
                 context.getString(if (record.payload.bool("isReadLater")) R.string.enabled else R.string.disabled))
             "feed" -> "${record.payload.string("title")} · ${record.payload.string("url")}"
-            else -> record.payload.string("name").orEmpty()
+            "setting" -> record.payload["value"]?.toString() ?: context.getString(R.string.defaults)
+            else -> record.payload.string("title") ?: record.payload.string("name").orEmpty()
         }
-        return BackupConflict(local.key, local.kind, local.payload.string("title") ?: local.payload.string("name") ?: local.key, summary(local), summary(remote))
+        return BackupConflict(local.key, local.kind, local.payload.string("title") ?: local.payload.string("name") ?: local.payload.string("link") ?: local.key, summary(local), summary(remote))
     }
 
     private fun normalizeParents(workspace: BackupWorkspace, resolution: ConflictResolution) {
@@ -299,7 +351,8 @@ class WebDavBackupEngine @Inject constructor(
                 workspace.put("merged", feed.copy(payload = updated, hash = recordHash("feed", false, updated)))
             }
         }
-        for (article in workspace.records("merged", "article")) {
+        for (recordKey in workspace.keys("merged", "state") + workspace.keys("merged", "article")) {
+            val article = requireNotNull(workspace.get("merged", recordKey))
             if (article.deleted) continue
             val parent = workspace.get("merged", article.payload.string("feedKey").orEmpty())
             if (parent == null || parent.deleted) {
@@ -311,7 +364,7 @@ class WebDavBackupEngine @Inject constructor(
                 val keepLocal = resolution == ConflictResolution.KEEP_LOCAL || resolution == ConflictResolution.NEWEST && article.modifiedAt > (remoteParent?.modifiedAt ?: Long.MAX_VALUE)
                 val localParent = workspace.get("local", article.payload.string("feedKey").orEmpty())
                 if (keepLocal && localParent != null && !localParent.deleted) workspace.put("merged", localParent)
-                else workspace.put("merged", BackupRecord(article.key, "article", article.identity(), maxOf(article.modifiedAt, parent?.modifiedAt ?: 0), deleted = true, localId = article.localId))
+                else workspace.put("merged", BackupRecord(article.key, article.kind, article.identity(), maxOf(article.modifiedAt, parent?.modifiedAt ?: 0), deleted = true, localId = article.localId))
             }
         }
     }
@@ -323,11 +376,11 @@ class WebDavBackupEngine @Inject constructor(
     private suspend fun preserveRecovery(id: Int, config: WebDavConfig, baseline: Map<String, RecordStamp>) {
         val directory = storage.resolve("$id/recovery/${System.currentTimeMillis()}-${UUID.randomUUID()}")
         BackupWorkspace(directory).use { recovery ->
-            scan(id, config.copy(includeFullContent = true), recovery, "local", baseline)
+            scan(id, config.copy(includeArticles = true, includeFullContent = true), recovery, "local", baseline)
             val chunks = BackupTransport(client, config).writeChunks(recovery, "local")
             val now = System.currentTimeMillis()
             val manifest = BackupManifest(namespaceId = config.namespaceId, generation = "$now-${UUID.randomUUID()}", exportedAt = now,
-                recordCount = chunks.sumOf { it.count }, chunks = chunks).signed()
+                recordCount = chunks.sumOf { it.count }, chunks = chunks, includesArticles = true).signed()
             atomicJson(directory.resolve("manifest.json"), manifest)
         }
         directory.resolve("staging.db").delete()
@@ -338,20 +391,21 @@ class WebDavBackupEngine @Inject constructor(
         var groupsAdded = 0; var feedsAdded = 0; var articlesAdded = 0; var articlesUpdated = 0
         val writtenCache = mutableListOf<Pair<String, File>>()
         val removedCache = mutableListOf<String>()
+        val replaceArticles = replace && config.includeArticles
         database.withTransaction {
             scan(id, config, workspace, "fresh", baseline)
             check(workspace.unchanged()) { "Local articles changed during WebDAV sync. Retry to include those changes; no local data was replaced." }
+            if (replaceArticles) database.articleDao().deleteByAccountId(id)
             if (replace) {
-                database.articleDao().deleteByAccountId(id)
-                database.feedDao().deleteByAccountId(id)
-                database.groupDao().deleteByAccountId(id)
+                database.articleDao().deleteWebDavStates(id)
+                database.articleDao().resetReadingStates(id)
+                database.pendingArticleStateDao().clearAccount(id)
             }
             val groups = mutableMapOf<String, String>()
             for (record in workspace.records("merged", "group")) {
                 if (record.deleted) continue
                 val local = workspace.get("local", record.key)?.takeUnless { it.deleted }
-                val localId = if (record.payload.bool("default")) id.getDefaultGroupId() else if (!replace) local?.localId else null
-                val target = localId ?: (id spacerDollar UUID.randomUUID().toString())
+                val target = if (record.payload.bool("default")) id.getDefaultGroupId() else local?.localId ?: (id spacerDollar UUID.randomUUID().toString())
                 if (local == null) groupsAdded++
                 database.groupDao().insert(Group(target, if (record.payload.bool("default")) context.getString(R.string.defaults) else record.payload.string("name").orEmpty(), id))
                 groups[record.key] = target
@@ -361,7 +415,7 @@ class WebDavBackupEngine @Inject constructor(
             for (record in workspace.records("merged", "feed")) {
                 if (record.deleted) continue
                 val local = workspace.get("local", record.key)?.takeUnless { it.deleted }
-                val target = if (!replace) local?.localId ?: (id spacerDollar "webdav-${record.key.substringAfter(':')}") else (id spacerDollar "webdav-${record.key.substringAfter(':')}")
+                val target = local?.localId ?: (id spacerDollar "webdav-${record.key.substringAfter(':')}")
                 val body = record.payload
                 database.feedDao().insert(Feed(target, body.string("title") ?: body.string("url").orEmpty(), icon = body.string("icon"), url = body.string("url").orEmpty(),
                     groupId = groups[body.string("groupKey")] ?: id.getDefaultGroupId(), accountId = id,
@@ -370,27 +424,22 @@ class WebDavBackupEngine @Inject constructor(
                 feeds[record.key] = target
                 workspace.put("merged", record.copy(localId = target))
             }
+            // Content exists only in explicit backups. Daily sync never inserts placeholder articles.
             for (record in workspace.records("merged", "article")) {
                 currentCoroutineContext().ensureActive()
                 val body = record.payload
                 val local = workspace.get("local", record.key)?.takeUnless { it.deleted }
-                val feed = feeds[body.string("feedKey")]
-                if (feed == null) {
-                    local?.localId?.let { removedCache += it }
-                    continue
-                }
+                val feed = feeds[body.string("feedKey")] ?: continue
                 if (record.deleted) {
+                    if (!replaceArticles) local?.localId?.let { database.articleDao().deleteByIds(id, listOf(it)); removedCache += it }
                     database.feedDao().insertArchivedArticles(listOf(ArchivedArticle(feedId = feed, link = body.string("link").orEmpty(), archivedAt = record.modifiedAt)))
-                    if (!replace) local?.localId?.let { database.articleDao().deleteByIds(id, listOf(it)); removedCache += it }
                 } else {
-                    val target = if (!replace) local?.localId ?: (id spacerDollar "webdav-${record.key.substringAfter(':')}") else (id spacerDollar "webdav-${record.key.substringAfter(':')}")
-                    // A deliberate remote conflict choice supersedes the captured local pending write.
-                    if (local != null && local.hash != record.hash) database.pendingArticleStateDao().clearArticle(id, target)
+                    val target = local?.localId ?: (id spacerDollar "webdav-${record.key.substringAfter(':')}")
                     database.articleDao().insert(Article(target, Date(body.long("date")), body.string("title").orEmpty(), body.string("author"),
                         body.string("rawDescription").orEmpty(), body.string("shortDescription").orEmpty(), img = body.string("img"), link = body.string("link").orEmpty(),
-                        feedId = feed, accountId = id, isUnread = body.bool("isUnread", true), isStarred = body.bool("isStarred"), isReadLater = body.bool("isReadLater"),
+                        feedId = feed, accountId = id,
                         updateAt = body.string("updateAt")?.toLongOrNull()?.let(::Date) ?: Date(body.long("date"))))
-                    if (local == null) articlesAdded++ else if (local.hash != record.hash) articlesUpdated++
+                    if (local == null || replaceArticles) articlesAdded++
                     body.string("cachedBody")?.takeIf { it.isNotBlank() }?.let { content ->
                         val staged = workspace.directory.resolve("cache-${digest(target)}.html")
                         staged.writeText(content)
@@ -399,14 +448,40 @@ class WebDavBackupEngine @Inject constructor(
                     workspace.put("merged", record.copy(localId = target))
                 }
             }
-            for (record in workspace.records("merged", "feed")) {
-                if (record.deleted && !replace) workspace.get("local", record.key)?.localId?.let { target -> database.feedDao().queryById(target)?.let { database.feedDao().delete(it) } }
+            for (record in workspace.records("merged", "state")) {
+                if (record.deleted) continue
+                val body = record.payload
+                val feed = feeds[body.string("feedKey")] ?: continue
+                val state = WebDavArticleState(id, body.string("feedUrl").orEmpty(), body.string("link").orEmpty(),
+                    body.bool("isUnread", true), body.bool("isStarred"), body.bool("isReadLater"))
+                database.articleDao().saveWebDavStates(listOf(state))
+                val local = workspace.get("local", record.key)?.takeUnless { it.deleted }
+                val targets = database.articleDao().webDavStateTargets(id, feed, state.link)
+                if (local != null && local.hash != record.hash) targets.forEach { database.pendingArticleStateDao().clearArticle(id, it) }
+                database.articleDao().applyWebDavState(id, feed, state.link, state.isUnread, state.isStarred, state.isReadLater)
+                if (local != null && local.hash != record.hash) articlesUpdated += targets.size
+                workspace.put("merged", record.copy(localId = targets.firstOrNull()))
             }
-            for (record in workspace.records("merged", "group")) {
-                if (record.deleted && !replace) workspace.get("local", record.key)?.localId?.let { target -> database.groupDao().queryById(target)?.let { database.groupDao().delete(it) } }
+            // A lightweight replacement keeps the cached articles of retained subscriptions.
+            val retainedFeeds = feeds.values.toSet()
+            val deletedFeeds = workspace.records("merged", "feed").filter { it.deleted }.mapNotNull { workspace.get("local", it.key)?.localId }.toSet()
+            database.feedDao().queryAll(id).filter { feed ->
+                if (replace) feed.id !in retainedFeeds
+                else feed.id in deletedFeeds
+            }.forEach { feed ->
+                removedCache += database.articleDao().queryArticleIdentitiesByFeedId(feed.id).map { it.id }
+                database.feedDao().delete(feed)
             }
+            val retainedGroups = groups.values.toSet()
+            val deletedGroups = workspace.records("merged", "group").filter { it.deleted }.mapNotNull { workspace.get("local", it.key)?.localId }.toSet()
+            database.groupDao().queryAll(id).filter { group ->
+                if (replace) group.id !in retainedGroups
+                else group.id in deletedGroups
+            }.forEach { database.groupDao().delete(it) }
+            database.articleDao().pruneWebDavStates(id)
+            WebDavSettings.apply(context, workspace)
         }
-        if (replace) cache.clearCache(id)
+        if (replaceArticles) cache.clearCache(id)
         removedCache.forEach { cache.deleteCacheFor(it, id) }
         writtenCache.forEach { (articleId, content) -> cache.writeFullContent(id, articleId, content.readText()).getOrThrow() }
         return WebDavSyncResult(groupsAdded, feedsAdded, articlesAdded, articlesUpdated)

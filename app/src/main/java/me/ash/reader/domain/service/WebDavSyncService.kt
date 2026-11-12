@@ -22,8 +22,8 @@ import me.ash.reader.domain.service.backup.RestoreMode
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /**
- * Account-scoped WebDAV backups with verified chunks, conditional publication,
- * three-way conflict resolution and recovery copies. V1 snapshots remain readable.
+ * Lightweight account sync and separate optional content backups with verified chunks,
+ * conditional publication, conflict resolution and recovery copies. V1/V2 backups remain readable.
  */
 @Singleton
 class WebDavSyncService
@@ -57,6 +57,7 @@ constructor(
         val autoSync: Boolean = false,
         val namespaceId: String = UUID.randomUUID().toString(),
         val importLegacy: Boolean = false,
+        val includeArticles: Boolean = false,
         val includeFullContent: Boolean = false,
     ) {
         val configured: Boolean get() = serverUrl.isNotBlank()
@@ -239,7 +240,7 @@ constructor(
     }
 
     /**
-     * Runs a full sync after each RSS sync when automatic sync is enabled.
+     * Syncs subscriptions, app preferences and reading states after RSS sync when enabled.
      * Failures are logged and swallowed: WebDAV must never break RSS sync.
      */
     suspend fun autoSync(accountId: Int) {

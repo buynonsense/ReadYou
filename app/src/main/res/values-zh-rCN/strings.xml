@@ -387,9 +387,9 @@
     <string name="webdav_test_success">连接成功</string>
     <string name="webdav_unauthorized">认证失败，请检查用户名和密码</string>
     <string name="webdav_sync_now">立即同步</string>
-    <string name="webdav_sync_now_desc">下载远程备份、合并后重新上传</string>
+    <string name="webdav_sync_now_desc">同步订阅源、APP 设置和阅读状态，不上传文章内容</string>
     <string name="webdav_upload">上传备份</string>
-    <string name="webdav_upload_desc">用本机数据覆盖远程备份</string>
+    <string name="webdav_upload_desc">按下方选项保存独立备份</string>
     <string name="webdav_restore">从备份恢复</string>
     <string name="webdav_restore_desc">将远程备份合并到本机</string>
     <string name="webdav_auto_sync">RSS 同步后自动同步</string>
@@ -400,7 +400,7 @@
     <string name="webdav_backup_success">备份已上传</string>
     <string name="webdav_sync_success">同步完成：新增 %1$d 个分组、%2$d 个订阅源、%3$d 篇文章，更新 %4$d 篇文章状态</string>
     <string name="webdav_failed">操作失败：%1$s</string>
-    <string name="webdav_tips">本地 RSS 账号在各设备使用相同服务器、目录和远程账号 ID 即可配对。变更与删除会合并，冲突需要明确选择。保留最近 20 个历史版本，备份不包含登录凭据。</string>
+    <string name="webdav_tips">日常同步包含订阅源、分组、APP 偏好及已读、收藏、稍后读状态，文章内容保留在本机。在其他设备使用相同服务器、目录和远程账号 ID 即可配对。配对设备需更新到支持此同步格式的版本。</string>
     <string name="webdav_account_id">远程账号 ID</string>
     <string name="webdav_account_id_desc">在另一台设备上填写相同 ID，即可配对此账号。不同账号默认使用独立 ID。</string>
     <string name="server_allow_http">允许此服务器使用 HTTP</string>
@@ -425,7 +425,7 @@
     <string name="retry">重试</string>
     <string name="webdav_remote_account_limit">服务端账号支持上传备份。请在本地 RSS 账号中恢复备份；服务端账号的订阅和阅读状态由对应服务管理。</string>
     <string name="webdav_include_content">备份离线全文</string>
-    <string name="webdav_include_content_desc">包含本机已下载的文章全文</string>
+    <string name="webdav_include_content_desc">开启文章内容备份后，额外包含已下载的全文；不影响日常同步</string>
     <string name="webdav_versions">远程备份版本</string>
     <string name="webdav_load_versions">加载历史版本</string>
     <string name="webdav_recovery_copies">本地恢复副本</string>
@@ -434,11 +434,11 @@
     <string name="webdav_history">操作历史</string>
     <string name="webdav_operation_success">成功</string>
     <string name="webdav_operation_failed">失败</string>
-    <string name="webdav_upload_confirm">将本机当前数据发布为新的远程版本，其他设备会接收这些变更。旧版本保留在备份历史中。</string>
-    <string name="webdav_restore_modes_desc">合并会保留本地条目，遇到冲突时让你选择；完全替换只保留所选备份中的数据。操作前会保存本地恢复副本。</string>
+    <string name="webdav_upload_confirm">按所选范围保存独立备份，日常同步仍不上传文章内容。旧备份保留在历史版本中。</string>
+    <string name="webdav_restore_modes_desc">合并会保留本地条目，冲突时让你选择；替换会恢复备份中的订阅和阅读状态。不含文章内容的备份会保留仍订阅源的本地文章缓存。APP 设置对整个应用生效。操作前保存本地恢复副本。</string>
     <string name="webdav_restore_merge">合并到此账号</string>
     <string name="webdav_restore_replace">完全替换此账号</string>
-    <string name="webdav_replace_confirm">用所选备份替换此本地账号的全部订阅、文章与阅读状态？备份中不存在的条目会被移除。操作前会保存本地恢复副本。</string>
+    <string name="webdav_replace_confirm">用所选备份替换订阅和阅读状态，并应用其中的 APP 设置？含文章内容的备份还会替换文章；否则保留仍订阅源的本地文章缓存。操作前保存本地恢复副本。</string>
     <string name="webdav_conflicts">有 %1$d 项冲突需要选择</string>
     <string name="webdav_conflicts_desc">下方最多预览 100 项冲突。选择会应用于本次操作的全部冲突。“按记录时间”比较记录的变更时间，受设备时钟影响。</string>
     <string name="webdav_conflict_local">本地：%1$s</string>
@@ -457,4 +457,8 @@
     <string name="webdav_article_state_summary">未读：%1$s · 收藏：%2$s · 稍后读：%3$s</string>
     <string name="sync_stage_sources">正在同步订阅源：%1$d / %2$d</string>
     <string name="sync_stage_pages">已下载 %1$d 页</string>
+    <string name="webdav_backup_section">可选备份</string>
+    <string name="webdav_backup_scope_desc">备份与日常同步分开保存。APP 设置包含外观、阅读和交互偏好；登录信息、证书、字体文件及本机指定浏览器不参与同步。</string>
+    <string name="webdav_include_articles">备份文章内容</string>
+    <string name="webdav_include_articles_desc">默认关闭。开启后，仅手动备份包含文章标题、RSS 正文和历史文章；旧文章可能无法从订阅源重新获取。</string>
 </resources>

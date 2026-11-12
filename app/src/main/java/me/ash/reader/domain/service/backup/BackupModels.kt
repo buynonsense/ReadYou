@@ -33,7 +33,7 @@ internal data class BackupRecord(
     @Transient val localId: String? = null,
 ) {
     fun identity(): JsonObject = JsonObject().apply {
-        for (name in when (kind) { "article" -> listOf("feedKey", "feedUrl", "link", "title"); "feed" -> listOf("url", "title", "groupKey"); else -> listOf("name", "default") }) {
+        for (name in when (kind) { "state" -> listOf("feedKey", "feedUrl", "link", "isUnread", "isStarred", "isReadLater"); "article" -> listOf("feedKey", "feedUrl", "link", "title"); "feed" -> listOf("url", "title", "groupKey"); "setting" -> listOf("name"); else -> listOf("name", "default") }) {
             payload[name]?.let { add(name, it) }
         }
     }
@@ -43,18 +43,20 @@ internal data class BackupMetadata(val records: List<RecordStamp> = emptyList())
 internal data class BackupChunk(val hash: String, val count: Int, val bytes: Long)
 internal data class BackupReference(val generation: String, val exportedAt: Long, val checksum: String)
 internal data class BackupManifest(
-    val version: Int = 2,
+    val version: Int = 3,
     val namespaceId: String,
     val generation: String,
     val exportedAt: Long,
     val recordCount: Int,
     val chunks: List<BackupChunk>,
     val history: List<BackupReference> = emptyList(),
+    val includesArticles: Boolean? = null,
     val checksum: String = "",
 ) {
     fun signed() = copy(checksum = digest(backupGson.toJson(copy(checksum = ""))))
     fun verify(namespace: String) {
-        require(version == 2) { "Unsupported WebDAV backup version: $version" }
+        require(version in 2..3) { "Unsupported WebDAV backup version: $version" }
+        require(version == 2 || includesArticles != null) { "Missing backup content scope" }
         require(namespaceId == namespace) { "The backup belongs to a different remote account" }
         require(generation.matches(Regex("[0-9]{13}-[0-9a-f-]{36}"))) { "Invalid backup generation" }
         require(recordCount in 0..1_000_000 && exportedAt > 0) { "Invalid backup size or date" }
@@ -80,3 +82,8 @@ internal fun JsonObject.string(name: String): String? = get(name)?.takeUnless { 
 internal fun JsonObject.long(name: String): Long = string(name)?.toLongOrNull() ?: 0L
 internal fun JsonObject.bool(name: String, default: Boolean = false): Boolean = get(name)?.takeUnless { it.isJsonNull }?.asBoolean ?: default
 internal fun payload(vararg values: Pair<String, Any?>): JsonObject = backupGson.toJsonTree(linkedMapOf(*values)).asJsonObject
+
+internal enum class BackupScope(val id: String, val manifestFile: String) {
+    SYNC("sync", "readyou-sync-v3.json"),
+    BACKUP("backup", "readyou-backup-v3.json"),
+}

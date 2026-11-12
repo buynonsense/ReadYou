@@ -84,20 +84,27 @@ fun WebDavSyncPage(viewModel: WebDavSyncViewModel, onBack: () -> Unit) {
                 if (state.configurationLoaded && !state.supportsRestore) Tips(text = stringResource(R.string.webdav_remote_account_limit))
                 SettingItem(title = stringResource(R.string.webdav_sync_now), desc = stringResource(R.string.webdav_sync_now_desc),
                     enabled = restorable, onClick = viewModel::syncNow)
-                SettingItem(title = stringResource(R.string.webdav_upload), desc = stringResource(R.string.webdav_upload_desc),
-                    enabled = connected, onClick = { uploadConfirmation = true })
-                SettingItem(title = stringResource(R.string.webdav_restore), desc = stringResource(R.string.webdav_restore_desc),
-                    enabled = restorable, onClick = { generation = null; restoreOptions = true })
-                SettingItem(title = stringResource(R.string.webdav_include_content), desc = stringResource(R.string.webdav_include_content_desc),
-                    enabled = editable, onClick = { viewModel.saveConfig(config.copy(includeFullContent = !config.includeFullContent)) }) {
-                    RYSwitch(activated = config.includeFullContent, enable = editable) { viewModel.saveConfig(config.copy(includeFullContent = !config.includeFullContent)) }
-                }
                 SettingItem(title = stringResource(R.string.webdav_auto_sync), enabled = editable && state.supportsRestore,
                     onClick = { viewModel.saveConfig(config.copy(autoSync = !config.autoSync)) }) {
                     RYSwitch(activated = config.autoSync, enable = editable && state.supportsRestore) { viewModel.saveConfig(config.copy(autoSync = !config.autoSync)) }
                 }
                 SettingItem(title = stringResource(R.string.webdav_last_sync), desc = formatTime(state.lastSyncTime), enabled = false, onClick = {})
                 Tips(text = stringResource(R.string.webdav_tips))
+                Spacer(Modifier.height(24.dp))
+                Subtitle(Modifier.padding(horizontal = 24.dp), text = stringResource(R.string.webdav_backup_section))
+                Tips(text = stringResource(R.string.webdav_backup_scope_desc))
+                SettingItem(title = stringResource(R.string.webdav_upload), desc = stringResource(R.string.webdav_upload_desc),
+                    enabled = connected, onClick = { uploadConfirmation = true })
+                SettingItem(title = stringResource(R.string.webdav_restore), desc = stringResource(R.string.webdav_restore_desc),
+                    enabled = restorable, onClick = { generation = null; restoreOptions = true })
+                SettingItem(title = stringResource(R.string.webdav_include_articles), desc = stringResource(R.string.webdav_include_articles_desc),
+                    enabled = editable, onClick = { viewModel.saveConfig(config.copy(includeArticles = !config.includeArticles)) }) {
+                    RYSwitch(activated = config.includeArticles, enable = editable) { viewModel.saveConfig(config.copy(includeArticles = !config.includeArticles)) }
+                }
+                SettingItem(title = stringResource(R.string.webdav_include_content), desc = stringResource(R.string.webdav_include_content_desc),
+                    enabled = editable && config.includeArticles, onClick = { viewModel.saveConfig(config.copy(includeFullContent = !config.includeFullContent)) }) {
+                    RYSwitch(activated = config.includeFullContent && config.includeArticles, enable = editable && config.includeArticles) { viewModel.saveConfig(config.copy(includeFullContent = !config.includeFullContent)) }
+                }
                 Spacer(Modifier.height(24.dp))
                 Subtitle(Modifier.padding(horizontal = 24.dp), text = stringResource(R.string.webdav_versions))
                 SettingItem(title = stringResource(R.string.webdav_load_versions), enabled = connected, onClick = viewModel::loadVersions)

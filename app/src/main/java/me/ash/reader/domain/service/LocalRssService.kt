@@ -100,6 +100,7 @@ constructor(
                                 articleDao.insertListIfNotExist(
                                     articles = fetchedArticles,
                                     feed = currentFeed,
+                                    restoreWebDavStates = true,
                                 )
                             if (currentFeed.isNotification && newArticles.isNotEmpty()) {
                                 notificationHelper.notify(

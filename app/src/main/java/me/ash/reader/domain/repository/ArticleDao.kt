@@ -19,12 +19,42 @@ import me.ash.reader.domain.model.article.ArticleMeta
 import me.ash.reader.domain.model.article.ArticleSnapshot
 import me.ash.reader.domain.model.article.ArticleSyncMeta
 import me.ash.reader.domain.model.article.ArticleWithFeed
+import me.ash.reader.domain.model.article.WebDavArticleState
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.model.feed.ImportantNum
 import java.util.Date
 
 @Dao
 interface ArticleDao {
+    @Query("SELECT * FROM webdav_article_state WHERE accountId = :accountId")
+    suspend fun queryWebDavStates(accountId: Int): List<WebDavArticleState>
+
+    @Query("SELECT * FROM webdav_article_state WHERE accountId = :accountId AND feedUrl = :feedUrl AND link IN (:links)")
+    suspend fun queryWebDavStates(accountId: Int, feedUrl: String, links: List<String>): List<WebDavArticleState>
+
+    @Upsert
+    suspend fun saveWebDavStates(states: List<WebDavArticleState>)
+
+    @Query("DELETE FROM webdav_article_state WHERE accountId = :accountId")
+    suspend fun deleteWebDavStates(accountId: Int)
+
+    @Query("DELETE FROM webdav_article_state WHERE accountId = :accountId AND feedUrl NOT IN (SELECT url FROM feed WHERE accountId = :accountId)")
+    suspend fun pruneWebDavStates(accountId: Int)
+
+    @Query("""SELECT a.accountId, f.url AS feedUrl, a.link, a.isUnread, a.isStarred, a.isReadLater
+        FROM article a JOIN feed f ON f.id = a.feedId WHERE a.accountId = :accountId AND a.id IN (:ids)""")
+    suspend fun captureWebDavStates(accountId: Int, ids: List<String>): List<WebDavArticleState>
+
+    @Query("SELECT id FROM article WHERE accountId = :accountId AND feedId = :feedId AND link = :link")
+    suspend fun webDavStateTargets(accountId: Int, feedId: String, link: String): List<String>
+
+    @Query("""UPDATE article SET isUnread = :isUnread, isStarred = :isStarred, isReadLater = :isReadLater
+        WHERE accountId = :accountId AND feedId = :feedId AND link = :link""")
+    suspend fun applyWebDavState(accountId: Int, feedId: String, link: String, isUnread: Boolean, isStarred: Boolean, isReadLater: Boolean)
+
+    @Query("UPDATE article SET isUnread = 1, isStarred = 0, isReadLater = 0 WHERE accountId = :accountId")
+    suspend fun resetReadingStates(accountId: Int)
+
     @Query("SELECT COUNT(*) FROM article WHERE accountId = :accountId AND feedId = :feedId AND (isStarred = 1 OR isReadLater = 1)")
     suspend fun countProtectedByFeed(accountId: Int, feedId: String): Int
 
@@ -367,6 +397,7 @@ interface ArticleDao {
     ): List<ArticleLinkMeta> {
         val archivedAt = System.currentTimeMillis()
         identities.chunked(500).forEach { batch ->
+            saveWebDavStates(captureWebDavStates(accountId, batch.map { it.id }))
             insertArchivedIdentities(batch.map {
                 ArchivedArticle(feedId = it.feedId, link = it.link, archivedAt = archivedAt)
             })
@@ -928,7 +959,7 @@ interface ArticleDao {
     suspend fun update(vararg article: Article)
 
     @Transaction
-    suspend fun insertListIfNotExist(articles: List<Article>, feed: Feed): List<Article> {
+    suspend fun insertListIfNotExist(articles: List<Article>, feed: Feed, restoreWebDavStates: Boolean = false): List<Article> {
         if (articles.isEmpty()) return articles
 
         val existingArticles = queryArticlesByLinks(
@@ -937,6 +968,15 @@ interface ArticleDao {
             accountId = feed.accountId
         ).associateBy { it.link }
 
-        return articles.filterNot { existingArticles.containsKey(it.link) }.also { insertList(it) }
+        val newArticles = articles.filterNot { existingArticles.containsKey(it.link) }
+        if (!restoreWebDavStates) return newArticles.also { insertList(it) }
+        val states = newArticles.chunked(500).flatMap {
+            queryWebDavStates(feed.accountId, feed.url, it.map { article -> article.link })
+        }.associateBy { it.link }
+        return newArticles.map { article ->
+            states[article.link]?.let { state ->
+                article.copy(isUnread = state.isUnread, isStarred = state.isStarred, isReadLater = state.isReadLater)
+            } ?: article
+        }.also { insertList(it) }
     }
 }

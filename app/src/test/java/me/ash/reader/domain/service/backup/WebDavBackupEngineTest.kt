@@ -2,12 +2,18 @@ package me.ash.reader.domain.service.backup
 
 import android.app.Application
 import androidx.room.Room
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import com.google.gson.JsonParser
 import java.io.File
+import java.util.zip.GZIPInputStream
 import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import me.ash.reader.domain.model.article.Article
 import me.ash.reader.domain.model.article.ArticleLinkMeta
 import me.ash.reader.domain.model.feed.Feed
@@ -18,6 +24,7 @@ import me.ash.reader.infrastructure.db.ARTICLE_SEARCH_CALLBACK
 import me.ash.reader.infrastructure.net.WebDavClient
 import me.ash.reader.infrastructure.rss.ReaderCacheHelper
 import me.ash.reader.ui.ext.getDefaultGroupId
+import me.ash.reader.ui.ext.dataStore
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -54,15 +61,17 @@ class WebDavBackupEngineTest {
 
     @Before fun setup() = runBlocking {
         context.noBackupFilesDir.resolve("webdav-v2").deleteRecursively()
+        context.dataStore.edit { it.clear() }
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = synchronized(resources) {
                 val path = request.requestUrl!!.encodedPath
+                val isManifest = path.endsWith("readyou-sync-v3.json") || path.endsWith("readyou-backup-v3.json")
                 when (request.method) {
                     "GET" -> resources[path]?.let { MockResponse().setResponseCode(200).setHeader("ETag", it.etag).setBody(Buffer().write(it.bytes)) } ?: MockResponse().setResponseCode(404)
                     "MKCOL" -> MockResponse().setResponseCode(201)
                     "PUT" -> {
-                        if (path.endsWith("readyou-manifest-v2.json")) onManifestPut?.also { onManifestPut = null }?.invoke()
-                        if (path.endsWith("readyou-manifest-v2.json") && raceOnManifest) {
+                        if (isManifest) onManifestPut?.also { onManifestPut = null }?.invoke()
+                        if (isManifest && raceOnManifest) {
                             raceOnManifest = false
                             resources[path]?.let { resources[path] = it.copy(etag = "\"${revision.incrementAndGet()}\"") }
                         }
@@ -74,7 +83,7 @@ class WebDavBackupEngineTest {
                             val resource = Resource(request.body.readByteArray(), "\"${revision.incrementAndGet()}\"")
                             resources[path] = resource
                             if (path.contains("/chunks/")) chunkWrites.incrementAndGet()
-                            if (path.endsWith("readyou-manifest-v2.json")) manifestWrites.incrementAndGet()
+                            if (isManifest) manifestWrites.incrementAndGet()
                             MockResponse().setResponseCode(201).setHeader("ETag", resource.etag)
                         }
                     }
@@ -82,7 +91,7 @@ class WebDavBackupEngineTest {
                 }
             }
         }
-        config = WebDavConfig(serverUrl = server.url("dav").toString(), namespaceId = "paired")
+        config = WebDavConfig(serverUrl = server.url("dav").toString(), namespaceId = "paired", includeArticles = true)
         db = Room.inMemoryDatabaseBuilder(context, AndroidDatabase::class.java).addCallback(ARTICLE_SEARCH_CALLBACK).allowMainThreadQueries().build()
         cache = ReaderCacheHelper(context, Dispatchers.Unconfined, mock(), db.articleSearchDao())
         engine = WebDavBackupEngine(context, db, WebDavClient(OkHttpClient(), context), cache)
@@ -96,17 +105,219 @@ class WebDavBackupEngineTest {
     private suspend fun restore(id: Int, mode: RestoreMode = RestoreMode.MERGE) = engine.restore(id, config, mode, ConflictResolution.ASK, null) { null }
     private suspend fun articleFor(id: Int) = db.articleDao().queryStateMetadata(id).single().let { db.articleDao().queryById(it.id)!!.article }
 
-    @Test fun cleanupTombstonesPropagateWithoutResurrectingArticles() = runBlocking {
+    private fun remoteRecords(scope: BackupScope): List<BackupRecord> {
+        val manifest = resources.entries.single { it.key.endsWith(scope.manifestFile) }.value.bytes
+            .decodeToString().let { backupGson.fromJson(it, BackupManifest::class.java) }
+        return manifest.chunks.flatMap { chunk ->
+            val bytes = resources.entries.single { it.key.endsWith("/chunks/${chunk.hash}.json.gz") }.value.bytes
+            GZIPInputStream(bytes.inputStream()).reader().use { reader ->
+                JsonParser.parseReader(reader).asJsonArray.map { backupGson.fromJson(it, BackupRecord::class.java) }
+            }
+        }
+    }
+
+    @Test fun dailySyncNeverUploadsArticleContentEvenWhenFullBackupIsEnabled(): Unit = runBlocking {
+        cache.writeFullContent(1, article.id, "<p>Private cached full text</p>").getOrThrow()
+        engine.sync(1, config.copy(includeFullContent = true), ConflictResolution.ASK) { null }
+        val records = remoteRecords(BackupScope.SYNC)
+        assertEquals(setOf("group", "feed", "state", "setting"), records.map { it.kind }.toSet())
+        val state = records.single { it.kind == "state" }
+        assertEquals(setOf("feedKey", "feedUrl", "link", "isUnread", "isStarred", "isReadLater"), state.payload.keySet())
+        assertFalse(backupGson.toJson(records).contains("Private cached full text"))
+        assertFalse(backupGson.toJson(records).contains("Original"))
+        assertFalse(resources.keys.any { it.endsWith(BackupScope.BACKUP.manifestFile) })
+    }
+
+    @Test fun defaultManualBackupContainsNoArticleBodiesOrFullText(): Unit = runBlocking {
+        assertFalse(WebDavConfig().includeArticles)
+        backup(cfg = config.copy(includeArticles = false, includeFullContent = true))
+        assertFalse(remoteRecords(BackupScope.BACKUP).any { it.kind == "article" })
+        restore(2)
+        assertTrue(db.articleDao().queryStateMetadata(2).isEmpty())
+        assertEquals(article.link, db.articleDao().queryWebDavStates(2).single().link)
+    }
+
+    @Test fun statesArriveBeforeArticlesAndAreAppliedWhenRssIsFetched(): Unit = runBlocking {
+        db.articleDao().markAsReadByArticleId(1, article.id, false)
+        db.articleDao().markAsStarredByArticleId(1, article.id, true)
+        db.articleDao().markAsReadLaterByIdSet(1, setOf(article.id), true)
+        sync()
+        val result = sync(2)
+        assertEquals(0, result.articlesAdded)
+        assertTrue(db.articleDao().queryStateMetadata(2).isEmpty())
+        val feed = db.feedDao().queryAll(2).single()
+        val fetched = db.articleDao().insertListIfNotExist(
+            listOf(article.copy(id = "rss-fetched", accountId = 2, feedId = feed.id)), feed, restoreWebDavStates = true,
+        ).single()
+        assertFalse(fetched.isUnread)
+        assertTrue(fetched.isStarred)
+        assertTrue(fetched.isReadLater)
+        assertEquals("<p>Body</p>", articleFor(2).rawDescription)
+        sync(2)
+        assertFalse(articleFor(1).isUnread)
+    }
+
+    @Test fun firstPairingAppliesRemoteStatesToAlreadyFetchedArticles(): Unit = runBlocking {
+        val feed = Feed("device-two-feed", "Feed", url = "https://example.org/rss", groupId = 2.getDefaultGroupId(), accountId = 2)
+        db.feedDao().insert(feed)
+        db.articleDao().insert(article.copy(id = "device-two-article", feedId = feed.id, accountId = 2, rawDescription = "Device two body"))
+        db.articleDao().markAsReadByArticleId(1, article.id, false)
+        sync()
+        sync(2)
+        assertFalse(articleFor(2).isUnread)
+        assertEquals("Device two body", articleFor(2).rawDescription)
+    }
+
+    @Test fun manualContentBackupAndDailySyncKeepIndependentVersions(): Unit = runBlocking {
+        backup()
+        val original = resources.entries.single { it.key.endsWith(BackupScope.BACKUP.manifestFile) }.value
+        db.articleDao().insert(article.copy(rawDescription = "Changed only on this device"))
+        sync()
+        assertEquals(original, resources.entries.single { it.key.endsWith(BackupScope.BACKUP.manifestFile) }.value)
+        assertEquals(1, engine.versions(1, config).size)
+        assertTrue(remoteRecords(BackupScope.BACKUP).any { it.payload.string("rawDescription") == "<p>Body</p>" })
+        assertFalse(remoteRecords(BackupScope.SYNC).any { it.kind == "article" })
+        assertEquals("Changed only on this device", articleFor(1).rawDescription)
+    }
+
+    @Test fun lightweightReplacementPreservesCachedArticlesOfRetainedFeeds(): Unit = runBlocking {
+        backup(cfg = config.copy(includeArticles = false))
+        cache.writeFullContent(1, article.id, "Local cached full text").getOrThrow()
+        db.articleDao().insert(article.copy(title = "Locally refreshed title"))
+        db.articleDao().insert(article.copy(id = "extra", link = "https://example.org/extra", isStarred = true))
+        restore(1, RestoreMode.REPLACE)
+        val originals = db.articleDao().queryArticlesByLinks(listOf(article.link), article.feedId, 1)
+        assertEquals("Locally refreshed title", originals.single().title)
+        assertEquals(2, db.articleDao().queryStateMetadata(1).size)
+        assertFalse(db.articleDao().queryById("extra")!!.article.isStarred)
+        assertTrue(cache.readFullContent(article.id, 1).getOrThrow().contains("Local cached full text"))
+    }
+
+    @Test fun emptyFullBackupStillReplacesArticleContent(): Unit = runBlocking {
+        db.articleDao().deleteByAccountId(1)
+        backup()
+        db.articleDao().insert(article)
+        restore(1, RestoreMode.REPLACE)
+        assertTrue(db.articleDao().queryStateMetadata(1).isEmpty())
+    }
+
+    @Test fun appSettingsAreRestoredWithoutCredentialsOrDeviceChoices(): Unit = runBlocking {
+        val theme = intPreferencesKey("themeIndex")
+        val fontSize = intPreferencesKey("readingTextFontSize")
+        val password = stringPreferencesKey("webdav.1.password")
+        val browser = stringPreferencesKey("openLinkAppSpecificBrowser")
+        context.dataStore.edit {
+            it[theme] = 7; it[fontSize] = 22; it[password] = "PRIVATE_PASSWORD"; it[browser] = "device.browser"
+            it[stringPreferencesKey("tls.example.org")] = "PRIVATE_CERTIFICATE"
+        }
+        backup(cfg = config.copy(includeArticles = false))
+        val json = backupGson.toJson(remoteRecords(BackupScope.BACKUP))
+        assertFalse(json.contains("PRIVATE_"))
+        assertFalse(json.contains("device.browser"))
+        context.dataStore.edit { it.remove(theme); it.remove(fontSize); it[password] = "KEEP_LOCAL" }
+        restore(2, RestoreMode.REPLACE)
+        val preferences = context.dataStore.data.first()
+        assertEquals(7, preferences[theme])
+        assertEquals(22, preferences[fontSize])
+        assertEquals("KEEP_LOCAL", preferences[password])
+        assertEquals("device.browser", preferences[browser])
+    }
+
+    @Test fun appSettingsMergePerPreferenceAndCanResetToDefaults(): Unit = runBlocking {
+        val theme = intPreferencesKey("themeIndex")
+        val fontSize = intPreferencesKey("readingTextFontSize")
+        context.dataStore.edit { it[theme] = 5; it[fontSize] = 14 }
+        sync()
+        sync(2)
+        context.dataStore.edit { it[theme] = 4 }
+        sync(2)
+        // Simulate device 1's independent local preferences.
+        context.dataStore.edit { it[theme] = 5; it[fontSize] = 22 }
+        sync()
+        assertEquals(4, context.dataStore.data.first()[theme])
+        assertEquals(22, context.dataStore.data.first()[fontSize])
+        context.dataStore.edit { it.remove(theme) }
+        sync()
+        context.dataStore.edit { it[theme] = 4; it[fontSize] = 14 }
+        sync(2)
+        assertNull(context.dataStore.data.first()[theme])
+        assertEquals(22, context.dataStore.data.first()[fontSize])
+    }
+
+    @Test fun oldV2BackupsMigrateToStatesWithoutLosingTheirRestorableContent(): Unit = runBlocking {
+        backup()
+        val current = remoteRecords(BackupScope.BACKUP)
+        val states = current.filter { it.kind == "state" }.associateBy { it.payload.string("link") }
+        val legacyRecords = current.filter { it.kind in listOf("group", "feed", "article") }.map { record ->
+            if (record.kind != "article") record else {
+                val body = record.payload.deepCopy()
+                val state = states.getValue(body.string("link"))
+                listOf("isUnread", "isStarred", "isReadLater").forEach { body.add(it, state.payload[it]) }
+                record.copy(payload = body, hash = recordHash("article", false, body))
+            }
+        }
+        val directory = File.createTempFile("old-backup", "dir", context.cacheDir).apply { delete(); mkdirs() }
+        val root = java.net.URI(config.directoryUrl()).rawPath
+        BackupWorkspace(directory).use { workspace ->
+            legacyRecords.forEach { workspace.put("local", it) }
+            val chunks = BackupTransport(WebDavClient(OkHttpClient(), context), config).writeChunks(workspace, "local")
+            chunks.forEach { chunk -> resources["$root/chunks/${chunk.hash}.json.gz"] = Resource(directory.resolve("${chunk.hash}.json.gz").readBytes(), "\"legacy-chunk\"") }
+            val now = System.currentTimeMillis()
+            val manifest = BackupManifest(version = 2, namespaceId = config.namespaceId,
+                generation = "$now-${java.util.UUID.randomUUID()}", exportedAt = now,
+                recordCount = chunks.sumOf { it.count }, chunks = chunks).signed()
+            val legacy = Resource(backupGson.toJson(manifest).toByteArray(), "\"legacy\"")
+            resources["$root/readyou-manifest-v2.json"] = legacy
+            resources["$root/snapshots/${manifest.generation}.json"] = legacy
+        }
+        directory.deleteRecursively()
+        resources.remove("$root/${BackupScope.BACKUP.manifestFile}")
+        val old = resources.getValue("$root/readyou-manifest-v2.json")
+        sync(2)
+        assertTrue(db.articleDao().queryStateMetadata(2).isEmpty())
+        assertEquals(1, db.articleDao().queryWebDavStates(2).size)
+        assertFalse(remoteRecords(BackupScope.SYNC).any { it.kind == "article" })
+        assertEquals(old, resources.getValue("$root/readyou-manifest-v2.json"))
+        restore(2, RestoreMode.REPLACE)
+        assertEquals("<p>Body</p>", articleFor(2).rawDescription)
+    }
+
+    @Test fun oldV1SyncImportsOnlyStatesAndItsBackupRemainsRestorable(): Unit = runBlocking {
+        val legacy = me.ash.reader.domain.service.WebDavSyncService.WebDavSyncData(
+            exportedAt = 1_000,
+            feeds = listOf(me.ash.reader.domain.service.WebDavSyncService.FeedDto(id = "old-feed", url = "https://example.org/rss", title = "Feed")),
+            articles = listOf(me.ash.reader.domain.service.WebDavSyncService.ArticleDto(feedUrl = "https://example.org/rss", link = article.link,
+                title = "Legacy title", date = 1_000, isUnread = false, rawDescription = "Legacy body")),
+        )
+        engine.sync(2, config, ConflictResolution.ASK) { legacy }
+        assertTrue(db.articleDao().queryStateMetadata(2).isEmpty())
+        assertFalse(db.articleDao().queryWebDavStates(2).single().isUnread)
+        engine.restore(2, config, RestoreMode.REPLACE, ConflictResolution.ASK, null) { legacy }
+        assertEquals("Legacy body", articleFor(2).rawDescription)
+        assertFalse(articleFor(2).isUnread)
+    }
+
+    @Test fun appSettingsEditedDuringPublicationAreNotOverwritten(): Unit = runBlocking {
+        val fontSize = intPreferencesKey("readingTextFontSize")
+        context.dataStore.edit { it[fontSize] = 14 }
+        sync()
+        onManifestPut = { runBlocking { context.dataStore.edit { it[fontSize] = 22 } } }
+        assertTrue(runCatching { sync() }.isFailure)
+        assertEquals(22, context.dataStore.data.first()[fontSize])
+    }
+
+    @Test fun cacheCleanupKeepsOtherDevicesArticlesAndReadingStates() = runBlocking {
         backup()
         restore(2)
         sync(2)
+        db.articleDao().markAsReadByArticleId(1, article.id, false)
         db.articleDao().archiveAndDelete(1, listOf(ArticleLinkMeta(article.id, article.feedId, article.link)))
         sync()
         sync(2)
         assertTrue(db.articleDao().queryStateMetadata(1).isEmpty())
-        assertTrue(db.articleDao().queryStateMetadata(2).isEmpty())
-        val feed = db.feedDao().queryAll(2).single()
-        assertEquals(article.link, db.feedDao().queryArchivedArticles(feed.id).single().link)
+        assertFalse(articleFor(2).isUnread)
+        assertEquals("Original", articleFor(2).title)
+        assertFalse(db.articleDao().queryWebDavStates(1).single().isUnread)
     }
 
     @Test fun conflictingChangesArePreviewedBeforeAnyLocalOrRemoteMutation() = runBlocking {
@@ -131,8 +342,10 @@ class WebDavBackupEngineTest {
     @Test fun concurrentPublisherCannotOverwriteRemoteOrApplyItsSnapshotLocally() = runBlocking {
         backup()
         restore(2)
-        db.articleDao().insert(articleFor(2).copy(title = "Remote"))
-        backup(2)
+        sync()
+        sync(2)
+        db.articleDao().markAsReadByArticleId(2, articleFor(2).id, false)
+        sync(2)
         raceOnManifest = true
         val failure = runCatching { sync() }.exceptionOrNull()
         assertTrue(failure.toString(), failure is BackupConcurrentWriteException)
@@ -198,7 +411,7 @@ class WebDavBackupEngineTest {
         val firstCount = chunkWrites.get()
         assertTrue(firstCount > 1)
         val compressed = resources.filterKeys { it.contains("/chunks/") }.values.sumOf { it.bytes.size }
-        assertTrue(compressed < 100_000)
+        assertTrue("Compressed size was $compressed bytes", compressed * 4 < 600 * "content ".repeat(300).length)
         backup()
         assertEquals(firstCount, chunkWrites.get())
         assertEquals(2, engine.versions(1, config).size)
@@ -210,13 +423,14 @@ class WebDavBackupEngineTest {
     @Test fun localChangesDuringPublicationAreNeverOverwritten(): Unit = runBlocking {
         backup()
         restore(2)
+        sync()
         sync(2)
-        db.articleDao().insert(articleFor(2).copy(title = "Remote"))
+        db.articleDao().markAsReadByArticleId(2, articleFor(2).id, false)
         sync(2)
-        onManifestPut = { runBlocking { db.articleDao().insert(article.copy(title = "Edited while uploading")) } }
+        onManifestPut = { runBlocking { db.articleDao().markAsStarredByArticleId(1, article.id, true) } }
         val failure = runCatching { sync() }.exceptionOrNull()
         assertTrue(failure.toString(), failure?.message?.contains("Local articles changed") == true)
-        assertEquals("Edited while uploading", articleFor(1).title)
+        assertTrue(articleFor(1).isStarred)
     }
 
     @Test fun stagingDetectsChangedRecordHashes(): Unit = runBlocking {

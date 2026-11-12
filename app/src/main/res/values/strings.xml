@@ -423,9 +423,9 @@
     <string name="webdav_test_success">Connection successful</string>
     <string name="webdav_unauthorized">Authentication failed, check username and password</string>
     <string name="webdav_sync_now">Sync now</string>
-    <string name="webdav_sync_now_desc">Download, merge and upload the backup</string>
+    <string name="webdav_sync_now_desc">Sync subscriptions, app settings and reading states without article content</string>
     <string name="webdav_upload">Upload backup</string>
-    <string name="webdav_upload_desc">Overwrite the remote backup with this device\'s data</string>
+    <string name="webdav_upload_desc">Save a separate snapshot using the selected backup options</string>
     <string name="webdav_restore">Restore from backup</string>
     <string name="webdav_restore_desc">Merge the remote backup into this device</string>
     <string name="webdav_auto_sync">Auto sync after RSS sync</string>
@@ -436,7 +436,7 @@
     <string name="webdav_backup_success">Backup uploaded</string>
     <string name="webdav_sync_success">Sync completed: %1$d groups added, %2$d feeds added, %3$d articles added, %4$d articles updated</string>
     <string name="webdav_failed">Failed: %1$s</string>
-    <string name="webdav_tips">WebDAV sync pairs Local RSS accounts through the same server, directory and remote account ID. Changes and deletions are merged; conflicts require your choice. The latest 20 previous versions remain available. Credentials are excluded from backups.</string>
+    <string name="webdav_tips">Daily sync includes subscriptions, groups, app preferences and read, starred and read-later states. Article content stays on this device. Use the same server, directory and remote account ID on your other devices. Update all paired devices to use this sync format.</string>
     <string name="webdav_account_id">Remote account ID</string>
     <string name="webdav_account_id_desc">Use the same ID on your other device to pair this account. Each account gets a separate ID by default.</string>
     <string name="server_allow_http">Allow HTTP for this server</string>
@@ -461,7 +461,7 @@
     <string name="retry">Retry</string>
     <string name="webdav_remote_account_limit">Server accounts can upload backups. Restore a backup into a Local RSS account; subscriptions and reading states for server accounts are managed by their service.</string>
     <string name="webdav_include_content">Include cached full text</string>
-    <string name="webdav_include_content_desc">Save full text already downloaded on this device</string>
+    <string name="webdav_include_content_desc">Include downloaded full text when article content backup is enabled; daily sync is unaffected</string>
     <string name="webdav_versions">Remote backup versions</string>
     <string name="webdav_load_versions">Load versions</string>
     <string name="webdav_recovery_copies">Local recovery copies</string>
@@ -470,11 +470,11 @@
     <string name="webdav_history">Operation history</string>
     <string name="webdav_operation_success">Succeeded</string>
     <string name="webdav_operation_failed">Failed</string>
-    <string name="webdav_upload_confirm">Publish the current local data as a new remote version. Other devices will receive these changes. Previous versions remain in the backup history.</string>
-    <string name="webdav_restore_modes_desc">Merge keeps local entries and asks about conflicts. Replace restores only the selected backup. A local recovery copy is saved first.</string>
+    <string name="webdav_upload_confirm">Publish a separate backup with the selected options. Daily sync will not include article content. Previous backups remain in the version history.</string>
+    <string name="webdav_restore_modes_desc">Merge keeps local entries and asks about conflicts. Replace restores subscriptions and reading states from the selected backup. Backups without article content preserve the cache of retained subscriptions. App settings apply to the entire app. A local recovery copy is saved first.</string>
     <string name="webdav_restore_merge">Merge into this account</string>
     <string name="webdav_restore_replace">Replace this account</string>
-    <string name="webdav_replace_confirm">Replace all subscriptions, articles and reading states in this local account with the selected backup? Entries absent from the backup will be removed. A local recovery copy is saved first.</string>
+    <string name="webdav_replace_confirm">Replace subscriptions and reading states with the selected backup and apply its app settings? A backup containing article content also replaces articles. Otherwise, cached articles of retained subscriptions are preserved. A local recovery copy is saved first.</string>
     <string name="webdav_conflicts">%1$d conflicts need a choice</string>
     <string name="webdav_conflicts_desc">Review up to 100 conflicts below. Your choice applies to every conflict in this operation. Using the latest record compares recorded change times and depends on device clocks.</string>
     <string name="webdav_conflict_local">Local: %1$s</string>
@@ -493,4 +493,8 @@
     <string name="webdav_article_state_summary">Unread: %1$s · Starred: %2$s · Read later: %3$s</string>
     <string name="sync_stage_sources">Syncing feeds: %1$d / %2$d</string>
     <string name="sync_stage_pages">Downloaded %1$d pages</string>
+    <string name="webdav_backup_section">Optional backup</string>
+    <string name="webdav_backup_scope_desc">Backups are separate from daily sync. App settings include appearance, reading and interaction preferences. Credentials, certificates, font files and device-specific browser choices stay on this device.</string>
+    <string name="webdav_include_articles">Back up article content</string>
+    <string name="webdav_include_articles_desc">Off by default. Only manual backups include article titles, RSS bodies and history when enabled. Old articles may no longer be available from their feeds.</string>
 </resources>

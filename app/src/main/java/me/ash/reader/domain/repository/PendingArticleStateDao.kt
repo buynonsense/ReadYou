@@ -8,6 +8,9 @@ import me.ash.reader.domain.model.article.PendingArticleState
 
 @Dao
 interface PendingArticleStateDao {
+    @Query("DELETE FROM pending_article_state WHERE accountId = :accountId")
+    suspend fun clearAccount(accountId: Int)
+
     @Query("DELETE FROM pending_article_state WHERE accountId = :accountId AND articleId = :articleId")
     suspend fun clearArticle(accountId: Int, articleId: String)
     @Upsert

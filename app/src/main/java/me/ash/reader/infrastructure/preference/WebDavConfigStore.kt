@@ -67,6 +67,7 @@ class WebDavConfigStore @Inject constructor(
             autoSync = preferences[flagKey(accountId, "auto")] ?: false,
             namespaceId = requireNotNull(preferences[textKey(accountId, "namespace")]),
             importLegacy = preferences[flagKey(accountId, "legacy")] ?: false,
+            includeArticles = preferences[flagKey(accountId, "articles")] ?: false,
             includeFullContent = preferences[flagKey(accountId, "fullContent")] ?: false,
         )
     }
@@ -85,6 +86,7 @@ class WebDavConfigStore @Inject constructor(
             it[textKey(accountId, "namespace")] = config.namespaceId
             it[flagKey(accountId, "auto")] = config.autoSync
             it[flagKey(accountId, "legacy")] = config.importLegacy
+            it[flagKey(accountId, "articles")] = config.includeArticles
             it[flagKey(accountId, "fullContent")] = config.includeFullContent
         }
     }

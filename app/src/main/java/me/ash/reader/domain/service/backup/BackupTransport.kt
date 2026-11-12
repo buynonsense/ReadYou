@@ -16,13 +16,14 @@ import kotlinx.coroutines.ensureActive
 import me.ash.reader.domain.service.WebDavSyncService.WebDavConfig
 import me.ash.reader.infrastructure.net.WebDavClient
 
-internal data class DownloadedManifest(val manifest: BackupManifest, val etag: String?)
+internal data class DownloadedManifest(val manifest: BackupManifest, val etag: String?, val legacy: Boolean = false)
 
-internal class BackupTransport(private val client: WebDavClient, private val config: WebDavConfig) {
+internal class BackupTransport(private val client: WebDavClient, private val config: WebDavConfig, private val scope: BackupScope = BackupScope.BACKUP) {
     val root: String = config.directoryUrl()
-    private val manifestUrl get() = "$root/readyou-manifest-v2.json"
+    private val manifestUrl get() = "$root/${scope.manifestFile}"
 
     fun current(directory: File): DownloadedManifest? = readManifest(manifestUrl, directory)
+        ?: readManifest("$root/readyou-manifest-v2.json", directory)?.copy(legacy = true)
     fun version(reference: BackupReference, directory: File): DownloadedManifest {
         val downloaded = requireNotNull(readManifest("$root/snapshots/${reference.generation}.json", directory)) { "Historical backup was not found" }
         check(downloaded.manifest.checksum == reference.checksum) { "Historical manifest checksum mismatch" }
@@ -38,7 +39,7 @@ internal class BackupTransport(private val client: WebDavClient, private val con
             require(json.isJsonObject) { "Invalid WebDAV manifest" }
             val objectValue = json.asJsonObject
             require(objectValue.has("version")) { "Missing WebDAV backup version" }
-            require(objectValue["version"].asInt == 2) { "Unsupported WebDAV backup version: ${objectValue["version"]}" }
+            require(objectValue["version"].asInt in 2..3) { "Unsupported WebDAV backup version: ${objectValue["version"]}" }
             val manifest = backupGson.fromJson(json, BackupManifest::class.java)
             manifest.verify(config.namespaceId)
             DownloadedManifest(manifest, response.header("ETag"))
@@ -63,7 +64,8 @@ internal class BackupTransport(private val client: WebDavClient, private val con
                 while (reader.hasNext()) {
                     currentCoroutineContext().ensureActive()
                     val record = backupGson.fromJson<BackupRecord>(reader, BackupRecord::class.java)
-                    validate(record)
+                    validate(record, manifest.version)
+                    require(manifest.version == 2 || manifest.includesArticles == true || record.kind != "article") { "Article content found in a lightweight snapshot" }
                     workspace.put("remote", record, rejectDuplicate = true)
                     count++
                     check(count <= chunk.count) { "Unexpected records in WebDAV chunk" }
@@ -114,9 +116,10 @@ internal class BackupTransport(private val client: WebDavClient, private val con
         return chunks
     }
 
-    suspend fun publish(workspace: BackupWorkspace, previous: DownloadedManifest?, chunks: List<BackupChunk>, progress: (Int, Int) -> Unit): BackupManifest {
-        val etag = previous?.etag
-        require(previous == null || (etag != null && etag.startsWith('"') && etag.endsWith('"') && !etag.startsWith("W/"))) {
+    suspend fun publish(workspace: BackupWorkspace, previous: DownloadedManifest?, chunks: List<BackupChunk>, includeArticles: Boolean = false, progress: (Int, Int) -> Unit): BackupManifest {
+        val target = previous?.takeUnless { it.legacy }
+        val etag = target?.etag
+        require(target == null || (etag != null && etag.startsWith('"') && etag.endsWith('"') && !etag.startsWith("W/"))) {
             "This WebDAV server does not provide a strong ETag. Safe concurrent publication is unavailable; the backup was preserved."
         }
         val existing = previous?.manifest?.chunks?.map { it.hash }?.toSet().orEmpty()
@@ -142,7 +145,7 @@ internal class BackupTransport(private val client: WebDavClient, private val con
         val history = previous?.manifest?.let { listOf(BackupReference(it.generation, it.exportedAt, it.checksum)) + it.history }.orEmpty().take(20)
         val now = System.currentTimeMillis()
         val manifest = BackupManifest(namespaceId = config.namespaceId, generation = "$now-${UUID.randomUUID()}", exportedAt = now,
-            recordCount = chunks.sumOf { it.count }, chunks = chunks, history = history).signed()
+            recordCount = chunks.sumOf { it.count }, chunks = chunks, history = history, includesArticles = includeArticles).signed()
         val json = backupGson.toJson(manifest).toByteArray()
         currentCoroutineContext().ensureActive()
         client.putConditional("$root/snapshots/${manifest.generation}.json", config.username, config.password, json, ifAbsent = true).use {
@@ -150,20 +153,33 @@ internal class BackupTransport(private val client: WebDavClient, private val con
         }
         currentCoroutineContext().ensureActive()
         // The small pointer is the only mutable remote object. Conditional PUT is an atomic CAS.
-        client.putConditional(manifestUrl, config.username, config.password, json, ifMatch = etag, ifAbsent = previous == null).use {
+        client.putConditional(manifestUrl, config.username, config.password, json, ifMatch = etag, ifAbsent = target == null).use {
             if (it.code == 412 || it.code == 409) throw BackupConcurrentWriteException()
             check(it.isSuccessful) { "WebDAV manifest publication failed: HTTP ${it.code}" }
         }
         return manifest
     }
 
-    private fun validate(record: BackupRecord) {
-        require(record.kind in listOf("group", "feed", "article") && record.key.matches(Regex("${record.kind}:[a-f0-9]{64}"))) { "Invalid backup record identity" }
+    private fun validate(record: BackupRecord, version: Int) {
+        val kinds = if (version == 2) listOf("group", "feed", "article") else listOf("group", "feed", "article", "state", "setting")
+        require(record.kind in kinds && record.key.matches(Regex("${record.kind}:[a-f0-9]{64}"))) { "Invalid backup record identity" }
         require(record.modifiedAt >= 0 && record.hash == recordHash(record.kind, record.deleted, record.payload)) { "Invalid backup record checksum" }
         when (record.kind) {
             "group" -> require(record.payload.has("name")) { "Invalid backup group" }
             "feed" -> require(record.payload.has("url") && record.payload.has("groupKey")) { "Invalid backup feed" }
-            "article" -> require(record.payload.has("link") && record.payload.has("feedKey") && record.payload.has("feedUrl")) { "Invalid backup article" }
+            "article", "state" -> {
+                require(record.payload.has("link") && record.payload.has("feedKey") && record.payload.has("feedUrl")) { "Invalid backup article identity" }
+                val url = record.payload.string("feedUrl").orEmpty()
+                require(record.key == key(record.kind, "$url\u0000${record.payload.string("link")}") && record.payload.string("feedKey") == key("feed", url)) { "Mismatched article identity" }
+                if (record.kind == "state") {
+                    val fields = setOf("feedKey", "feedUrl", "link", "isUnread", "isStarred", "isReadLater")
+                    require(record.payload.keySet().all { it in fields }) { "Reading states cannot contain article content" }
+                    if (!record.deleted) require(listOf("isUnread", "isStarred", "isReadLater").all {
+                        record.payload[it]?.let { value -> value.isJsonPrimitive && value.asJsonPrimitive.isBoolean } == true
+                    }) { "Invalid reading state" }
+                }
+            }
+            "setting" -> WebDavSettings.validate(record)
         }
     }
 }
