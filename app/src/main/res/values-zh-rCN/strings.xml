@@ -385,6 +385,7 @@
     <string name="webdav_remote_path">远程目录</string>
     <string name="webdav_test">测试连接</string>
     <string name="webdav_test_success">连接成功</string>
+    <string name="webdav_test_failed">连接失败：%1$s</string>
     <string name="webdav_unauthorized">认证失败，请检查用户名和密码</string>
     <string name="webdav_sync_now">立即同步</string>
     <string name="webdav_sync_now_desc">同步订阅源、APP 设置和阅读状态，不上传文章内容</string>

@@ -78,16 +78,24 @@ constructor(
     fun mkcol(url: String, username: String?, password: String?): Response =
         execute(request(url, username, password) { method("MKCOL", null) })
 
-    /** Creates every missing collection between the server root and [url]'s parent. */
+    /** Creates only missing collections between the server root and [url]'s parent. */
     private fun createParentCollections(url: String, username: String?, password: String?) {
         val httpUrl = url.toHttpUrlOrNull() ?: return
         val segments = httpUrl.encodedPath.trim('/').split('/').filter { it.isNotBlank() }.dropLast(1)
         var current = httpUrl.newBuilder().encodedPath("/").build().toString()
         for (segment in segments) {
             current = if (current.endsWith("/")) current + segment else "$current/$segment"
-            // 405 means the collection already exists, which is fine.
+            // Existing server-owned collections (for example Nutstore's /dav)
+            // may reject MKCOL with 403 even though they are usable.
+            val existsOrInaccessible = propfind(current, username, password).use { response ->
+                response.isSuccessful || response.code == 207 || response.code == 403
+            }
+            if (existsOrInaccessible) continue
+
             mkcol(current, username, password).use {
-                check(it.isSuccessful || it.code == 405) { "Could not create WebDAV collection: HTTP ${it.code}" }
+                check(it.isSuccessful || it.code == 405 || it.code == 409) {
+                    "Could not create WebDAV collection: HTTP ${it.code}"
+                }
             }
         }
     }

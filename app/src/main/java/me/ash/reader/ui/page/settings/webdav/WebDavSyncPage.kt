@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import me.ash.reader.R
@@ -18,6 +19,8 @@ import me.ash.reader.domain.service.backup.*
 import me.ash.reader.ui.component.base.*
 import me.ash.reader.ui.ext.DateFormat
 import me.ash.reader.ui.ext.collectAsStateValue
+import me.ash.reader.ui.ext.showToast
+import me.ash.reader.ui.ext.showToastLong
 import me.ash.reader.ui.ext.toString
 import me.ash.reader.ui.page.settings.SettingItem
 import me.ash.reader.ui.page.settings.accounts.connection.ServerSecuritySettings
@@ -26,7 +29,17 @@ import java.util.Date
 
 @Composable
 fun WebDavSyncPage(viewModel: WebDavSyncViewModel, onBack: () -> Unit) {
+    val context = LocalContext.current
     val state = viewModel.uiState.collectAsStateValue()
+    val connectionTestSuccess = stringResource(R.string.webdav_test_success)
+    val connectionTestFailure = stringResource(R.string.webdav_test_failed, state.connectionTestResult?.error.orEmpty())
+    LaunchedEffect(state.connectionTestResult) {
+        state.connectionTestResult?.let { result ->
+            if (result.error == null) context.showToast(connectionTestSuccess)
+            else context.showToastLong(connectionTestFailure)
+            viewModel.consumeConnectionTestResult()
+        }
+    }
     val config = state.config
     val editable = state.configurationLoaded && !state.isLoading
     val connected = editable && config.configured
@@ -61,7 +74,6 @@ fun WebDavSyncPage(viewModel: WebDavSyncViewModel, onBack: () -> Unit) {
                 state.error?.let { Tips(text = it) }
                 if (state.canRetry) SettingItem(title = stringResource(R.string.retry), enabled = editable, onClick = viewModel::retry)
                 when (state.completedAction) {
-                    WebDavSyncViewModel.Action.TEST -> Tips(text = stringResource(R.string.webdav_test_success))
                     WebDavSyncViewModel.Action.BACKUP -> Tips(text = stringResource(R.string.webdav_backup_success))
                     else -> state.result?.let { Tips(text = stringResource(R.string.webdav_sync_success, it.groupsAdded, it.feedsAdded, it.articlesAdded, it.articlesUpdated)) }
                 }

@@ -421,6 +421,7 @@
     <string name="webdav_remote_path">Remote directory</string>
     <string name="webdav_test">Test connection</string>
     <string name="webdav_test_success">Connection successful</string>
+    <string name="webdav_test_failed">Connection failed: %1$s</string>
     <string name="webdav_unauthorized">Authentication failed, check username and password</string>
     <string name="webdav_sync_now">Sync now</string>
     <string name="webdav_sync_now_desc">Sync subscriptions, app settings and reading states without article content</string>

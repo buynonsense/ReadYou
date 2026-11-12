@@ -23,7 +23,8 @@ class WebDavSyncViewModel @Inject constructor(
     @IODispatcher private val ioDispatcher: CoroutineDispatcher,
     @MainDispatcher private val mainDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
-    enum class Action { TEST, SYNC, BACKUP, RESTORE, RECOVERY, VERSIONS }
+    enum class Action { SYNC, BACKUP, RESTORE, RECOVERY, VERSIONS }
+    data class ConnectionTestResult(val error: String? = null)
     private data class Request(
         val action: Action,
         val mode: RestoreMode = RestoreMode.MERGE,
@@ -45,6 +46,7 @@ class WebDavSyncViewModel @Inject constructor(
         val versionsLoaded: Boolean = false,
         val recoveryCopies: List<BackupRecoveryCopy> = emptyList(),
         val history: List<BackupHistoryEntry> = emptyList(),
+        val connectionTestResult: ConnectionTestResult? = null,
         val completedAction: Action? = null,
         val result: WebDavSyncService.WebDavSyncResult? = null,
     )
@@ -97,7 +99,15 @@ class WebDavSyncViewModel @Inject constructor(
         }
     }
 
-    fun testConnection() = execute(Request(Action.TEST))
+    fun testConnection() = launchOperation { target ->
+        val result = service.testConnection(_uiState.value.config)
+        if (target == accountId) _uiState.update {
+            it.copy(connectionTestResult = ConnectionTestResult(result.exceptionOrNull()?.let { error ->
+                error.message ?: error.javaClass.simpleName
+            }))
+        }
+    }
+    fun consumeConnectionTestResult() { _uiState.update { it.copy(connectionTestResult = null) } }
     fun syncNow() = execute(Request(Action.SYNC))
     fun backup() = execute(Request(Action.BACKUP))
     fun loadVersions() = execute(Request(Action.VERSIONS))
@@ -114,7 +124,6 @@ class WebDavSyncViewModel @Inject constructor(
         lastRequest = request
         launchOperation { target ->
             val result = when (request.action) {
-                Action.TEST -> { service.testConnection(_uiState.value.config).getOrThrow(); null }
                 Action.BACKUP -> { service.backup(target).getOrThrow(); null }
                 Action.SYNC -> service.syncNow(target, request.resolution).getOrThrow()
                 Action.RESTORE -> service.restore(target, request.mode, request.resolution, request.generation).getOrThrow()
@@ -133,7 +142,7 @@ class WebDavSyncViewModel @Inject constructor(
     private fun launchOperation(requireConfiguration: Boolean = true, block: suspend (Int) -> Unit) {
         if (_uiState.value.isLoading || accountId <= 0 || requireConfiguration && !_uiState.value.configurationLoaded) return
         val target = accountId
-        _uiState.update { it.copy(isLoading = true, error = null, canRetry = false, conflict = null, completedAction = null, result = null) }
+        _uiState.update { it.copy(isLoading = true, error = null, canRetry = false, conflict = null, connectionTestResult = null, completedAction = null, result = null) }
         operationJob = viewModelScope.launch(mainDispatcher) {
             try {
                 val result = withContext(ioDispatcher) { runCatchingCancellable { block(target) } }
